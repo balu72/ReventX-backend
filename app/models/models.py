@@ -607,6 +607,10 @@ class Transportation(db.Model):
     return_booking_reference = db.Column(db.String(50), nullable=False)
     return_seat_info = db.Column(db.String(50), nullable=True)
     
+    # Ticket uploads
+    arrival_ticket = db.Column(db.String(255), nullable=True)
+    return_ticket = db.Column(db.String(255), nullable=True)
+    
     def to_dict(self):
         return {
             'id': self.id,
@@ -621,7 +625,8 @@ class Transportation(db.Model):
                 'arrival_location': self.outbound_arrival_location,
                 'arrival_datetime': self.outbound_arrival_datetime.isoformat() if self.outbound_arrival_datetime else None,
                 'booking_reference': self.outbound_booking_reference,
-                'seat_info': self.outbound_seat_info
+                'seat_info': self.outbound_seat_info,
+                'ticket': self.arrival_ticket
             },
             'return': {
                 'type': self.return_type or self.type,  # Use individual type or fall back to main type
@@ -632,7 +637,8 @@ class Transportation(db.Model):
                 'arrival_location': self.return_arrival_location,
                 'arrival_datetime': self.return_arrival_datetime.isoformat() if self.return_arrival_datetime else None,
                 'booking_reference': self.return_booking_reference,
-                'seat_info': self.return_seat_info
+                'seat_info': self.return_seat_info,
+                'ticket': self.return_ticket
             }
         }
 
@@ -1002,8 +1008,10 @@ class StallInventory(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     stall_number = db.Column(db.String(15), nullable=False)
     stall_type_id = db.Column(db.Integer, db.ForeignKey('stall_types.id'))
+    allow_seller_selection = db.Column(db.Boolean, default=True)
     is_allocated = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, onupdate=datetime.utcnow)
     
     # Relationships
     stall_type = db.relationship('StallType', backref=db.backref('inventory', lazy=True))
@@ -1013,8 +1021,10 @@ class StallInventory(db.Model):
             'id': self.id,
             'stall_number': self.stall_number,
             'stall_type_id': self.stall_type_id,
+            'allow_seller_selection': self.allow_seller_selection,
             'is_allocated': self.is_allocated,
             'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'stall_type': self.stall_type.to_dict() if self.stall_type else None
         }
 

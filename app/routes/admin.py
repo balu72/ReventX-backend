@@ -1463,6 +1463,9 @@ def get_host_properties():
             # 2. isAvailable = True if number_current_guests < 2*rooms_allotted, else False
             property_dict['isAvailable'] = number_current_guests < (2 * property.rooms_allotted)
             
+            # Count actual number of guests from accommodations table
+            property_dict["actual_number_of_guests"] = db.session.query(func.count(Accommodation.id)).filter(Accommodation.host_property_id == property.property_id).scalar()
+            
             properties_data.append(property_dict)
         
         return jsonify({
@@ -2394,9 +2397,9 @@ def allocate_transportation_to_buyer(buyer_id):
         db.session.rollback()
         return jsonify({'error': f'Failed to allocate ground transportation: {str(e)}'}), 500
 
-@admin.route('/buyers/<int:buyer_id>/transportation', methods=['GET'])
+@admin.route('/buyers/<int:buyer_id>/ground-transportation', methods=['GET'])
 @admin_required
-def get_buyer_transportation(buyer_id):
+def get_buyer_ground_transportation(buyer_id):
     """
     Get ground transportation for a specific buyer (admin only)
     """
@@ -2429,6 +2432,49 @@ def get_buyer_transportation(buyer_id):
         
     except Exception as e:
         return jsonify({'error': f'Failed to fetch buyer transportation: {str(e)}'}), 500
+
+@admin.route('/buyers/<int:buyer_id>/transportation', methods=['GET'])
+@admin_required
+def get_buyer_transportation_information(buyer_id):
+    """
+    Get transportation information for a specific buyer (admin only)
+    """
+    try:
+        # Find the buyer
+        buyer = User.query.get(buyer_id)
+        if not buyer or not buyer.is_buyer():
+            return jsonify({'error': 'Buyer not found or user is not a buyer'}), 404
+        
+        # Get buyer's travel plan
+        travel_plan = TravelPlan.query.filter_by(user_id=buyer_id).first()
+        if not travel_plan:
+            return jsonify({
+                'buyer_id': buyer_id,
+                'buyer_name': buyer.buyer_profile.name if buyer.buyer_profile else buyer.username,
+                'transportation': None,
+                'message': 'No travel plan found for this buyer'
+            }), 200
+        
+        # Query the public.transportation table for this travel plan
+        from ..models import Transportation
+        transportation = Transportation.query.filter_by(travel_plan_id=travel_plan.id).first()
+        
+        if not transportation:
+            return jsonify({
+                'buyer_id': buyer_id,
+                'buyer_name': buyer.buyer_profile.name if buyer.buyer_profile else buyer.username,
+                'transportation': None
+            }), 200
+        
+        # Return full transportation information
+        return jsonify({
+            'buyer_id': buyer_id,
+            'buyer_name': buyer.buyer_profile.name if buyer.buyer_profile else buyer.username,
+            'transportation': transportation.to_dict() if hasattr(transportation, 'to_dict') else {}
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': f'Failed to fetch buyer transportation information: {str(e)}'}), 500
 
 @admin.route('/transportation/<int:transportation_id>', methods=['PUT'])
 @admin_required

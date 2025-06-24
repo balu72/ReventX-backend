@@ -1148,6 +1148,153 @@ def upload_profile_image():
             'error': f'Failed to upload profile image: {str(e)}'
         }), 500
 
+@buyer.route('/travel-plans/<int:plan_id>/upload-ticket', methods=['POST'])
+@buyer_required
+def upload_ticket(plan_id):
+    """
+    Endpoint to upload a ticket for a travel plan
+    """
+    user_id = get_jwt_identity()
+    
+    # Convert to int if it's a string
+    if isinstance(user_id, str):
+        try:
+            user_id = int(user_id)
+        except ValueError:
+            return jsonify({'error': 'Invalid user ID'}), 400
+    
+    # Check if file was uploaded
+    if 'ticket' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+    
+    # Get section parameter
+    section = request.form.get('section')
+    if section not in ['arrival', 'departure']:
+        return jsonify({'error': 'Invalid section. Must be "arrival" or "departure"'}), 400
+    
+    file = request.files['ticket']
+    
+    # Validate file
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+    
+    # Check file type (PDF only)
+    if not file.filename.lower().endswith('.pdf'):
+        return jsonify({'error': 'Invalid file type. Only PDF files are allowed'}), 400
+    
+    # Check file size (2MB limit)
+    file.seek(0, os.SEEK_END)
+    file_size = file.tell()
+    file.seek(0)  # Reset file pointer
+    
+    if file_size > 2 * 1024 * 1024:  # 2MB
+        return jsonify({'error': 'File size exceeds 2MB limit'}), 400
+    
+    # Fetch travel plan
+    travel_plan = TravelPlan.query.filter_by(id=plan_id, user_id=user_id).first()
+    if not travel_plan:
+        return jsonify({'error': 'Travel plan not found or access denied'}), 404
+    
+    # Check if transportation record exists
+    if not travel_plan.transportation:
+        return jsonify({'error': 'Transportation record not found'}), 404
+    
+    try:
+        # Get NextCloud credentials
+        storage_url = os.getenv('EXTERNAL_STORAGE_URL')+"index.php"
+        storage_user = os.getenv('EXTERNAL_STORAGE_USER')
+        storage_password = os.getenv('EXTERNAL_STORAGE_PASSWORD')
+        ocs_url = os.getenv("EXTERNAL_STORAGE_URL")+'ocs/v2.php/apps/files_sharing/api/v1/shares'
+        ocs_headers = {'OCS-APIRequest': 'true',"Accept": "application/json"}
+        ocs_auth = (storage_user, storage_password)
+        
+        if not all([storage_url, storage_user, storage_password]):
+            return jsonify({'error': 'External storage configuration missing'}), 500
+        
+        nc = Nextcloud(nextcloud_url=storage_url, nc_auth_user=storage_user, nc_auth_pass=storage_password)
+        
+        # Create directory structure if needed
+        buyer_dir = f"buyer_{user_id}"
+        buyer_base_doc_dir = f"/Documents/{buyer_dir}"
+        tickets_dir = f"{buyer_base_doc_dir}/tickets"
+        
+        # Create base directory if it doesn't exist
+        try:
+            nc.files.listdir(buyer_base_doc_dir)
+        except NextcloudException as e:
+            if e.status_code == 404:
+                nc.files.mkdir(buyer_base_doc_dir)
+                # Set sharing permissions
+                dir_sharing_data = {
+                    'path': buyer_base_doc_dir,
+                    'shareType': 3,  # Public link
+                    'permissions': 1  # Read-only
+                }
+                requests.post(ocs_url, headers=ocs_headers, data=dir_sharing_data, auth=ocs_auth)
+        
+        # Create tickets directory if it doesn't exist
+        try:
+            nc.files.listdir(tickets_dir)
+        except NextcloudException as e:
+            if e.status_code == 404:
+                nc.files.mkdir(tickets_dir)
+                # Set sharing permissions
+                dir_sharing_data = {
+                    'path': tickets_dir,
+                    'shareType': 3,  # Public link
+                    'permissions': 1  # Read-only
+                }
+                requests.post(ocs_url, headers=ocs_headers, data=dir_sharing_data, auth=ocs_auth)
+        
+        # Generate unique filename
+        filename = secure_filename(f"{section}_ticket.pdf")
+        
+        # Upload file
+        upload_path = f"{tickets_dir}/{filename}"
+        file_data = file.read()
+        file.seek(0)
+        
+        buf = BytesIO(file_data)
+        buf.seek(0)
+        uploaded_file = nc.files.upload_stream(upload_path, buf)
+        
+        # Create public share
+        file_sharing_data = {
+            'path': upload_path,
+            'shareType': 3,  # Public link
+            'permissions': 1  # Read-only
+        }
+        response = requests.post(ocs_url, headers=ocs_headers, data=file_sharing_data, auth=ocs_auth)
+        
+        if response.status_code != 200:
+            return jsonify({'error': 'Failed to create public share for ticket'}), 500
+        
+        result = response.json()
+        if result["ocs"]["meta"]["status"] != "ok":
+            return jsonify({'error': 'Failed to create public share for ticket'}), 500
+        
+        # Get public URL
+        file_public_url = result["ocs"]["data"]["url"] + "/download"
+        
+        # Update transportation record based on section
+        if section == 'arrival':
+            travel_plan.transportation.arrival_ticket = file_public_url
+        else:  # departure
+            travel_plan.transportation.return_ticket = file_public_url
+        
+        db.session.commit()
+        
+        return jsonify({
+            'message': f'{section.capitalize()} ticket uploaded successfully',
+            'travel_plan': travel_plan.to_dict()
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'error': f'Failed to upload ticket: {str(e)}'
+        }), 500
+
 @buyer.route('/sellers', methods=['GET'])
 @buyer_required
 def get_sellers():
