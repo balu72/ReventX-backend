@@ -1350,7 +1350,7 @@ def get_sellers():
             'image_url': profile.logo_url or '/images/sellers/default.jpg',
             'isVerified': profile.is_verified,
             # Get actual stall number from Stall table
-            'stallNo': '',  # Default to empty string
+            'stallNo': 'Not Allocated Yet',  # Default to Not Allocated
             'website': profile.website or '',
             'microsite_url': microsite_url,
             'contactEmail': profile.contact_email or user.email,
