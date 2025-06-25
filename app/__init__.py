@@ -33,7 +33,14 @@ def create_app():
         app.logger.debug('Headers: %s', dict(request.headers))
         if request.get_data():
             app.logger.debug('Body: %s', request.get_data())
-    
+
+    @app.after_request
+    def no_cache(response):
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, private'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        return response
+
     CORS(app)
     CORS(app, resources={r"/api/*": {"origins": ["http://localhost", "http://localhost:3000", "http://localhost:80","http://localhost:8080", "http://dechivo.com", "https://dechivo.com", "http://splash25-frontend:8080", "http://frontend:8080"]}})
 
