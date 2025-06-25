@@ -11,7 +11,7 @@ from werkzeug.utils import secure_filename
 import os
 import logging
 from ..utils.auth import buyer_required
-from ..models import db, User, TravelPlan, Transportation, Accommodation, GroundTransportation, Meeting, MeetingStatus, UserRole, TimeSlot, SystemSetting, BuyerProfile, BuyerCategory, PropertyType, Interest, StallType
+from ..models import db, User, TravelPlan, Transportation, Accommodation, GroundTransportation, Meeting, MeetingStatus, UserRole, TimeSlot, SystemSetting, BuyerProfile, BuyerCategory, PropertyType, Interest, StallType, Stall
 
 buyer = Blueprint('buyer', __name__, url_prefix='/api/buyer')
 
@@ -1349,7 +1349,8 @@ def get_sellers():
             'specialties': [interest.name for interest in profile.target_market_relationships],  # Dynamic specialties from database
             'image_url': profile.logo_url or '/images/sellers/default.jpg',
             'isVerified': profile.is_verified,
-            'stallNo': f"A{user.id:02d}",  # Placeholder
+            # Get actual stall number from Stall table
+            'stallNo': '',  # Default to empty string
             'website': profile.website or '',
             'microsite_url': microsite_url,
             'contactEmail': profile.contact_email or user.email,
@@ -1359,6 +1360,16 @@ def get_sellers():
         # Filter by specialty if provided (placeholder logic)
         if specialty and specialty not in seller_data['specialties']:
             continue
+        
+        # Get all allocated stall numbers for this seller
+        stalls = Stall.query.filter_by(seller_id=user.id).all()
+        stall_numbers = []
+        for stall in stalls:
+            if stall.allocated_stall_number:
+                stall_numbers.append(stall.allocated_stall_number)
+                
+        if stall_numbers:
+            seller_data['stallNo'] = ', '.join(stall_numbers)
         
         # Check meeting status
         user_id = get_jwt_identity()
