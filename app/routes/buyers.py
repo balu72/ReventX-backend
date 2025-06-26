@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required
 from ..utils.auth import seller_required, admin_required
 from ..models import db, User, UserRole, BuyerProfile, Interest, PropertyType
+from ..utils.meeting_utils import calculate_buyer_meeting_quota
 
 buyers = Blueprint('buyers', __name__, url_prefix='/api/buyers')
 
@@ -53,7 +54,6 @@ def get_buyers():
     buyer_profiles = query.all()
     
     # Convert to dict format without problematic relationships
-
     buyers_data = []
     for b in buyer_profiles:
         buyer_dict = {
@@ -96,9 +96,15 @@ def get_buyers():
                 'created_at': b.user.created_at.isoformat() if b.user.created_at else None
             }
         }
+        
+        # Calculate meeting quota information for each buyer
+        meeting_quota = calculate_buyer_meeting_quota(b.user_id, b)
+
+        # Add meeting quota information to the buyer dictionary
+        buyer_dict.update(meeting_quota)
+        
         buyers_data.append(buyer_dict)
- 
-    
+     
     return jsonify({
        'buyers': buyers_data
     }), 200
@@ -163,6 +169,12 @@ def get_buyer(buyer_id):
             'created_at': user.created_at.isoformat() if user.created_at else None
         }
     }
+    
+    # Calculate meeting quota information
+    meeting_quota = calculate_buyer_meeting_quota(buyer_id, buyer_profile)
+    
+    # Add meeting quota information to the buyer dictionary
+    buyer_dict.update(meeting_quota)
     
     return jsonify({
         'buyer': buyer_dict

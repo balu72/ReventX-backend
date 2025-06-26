@@ -115,6 +115,8 @@ def get_profile():
     """
     Endpoint to get buyer profile information
     """
+    from ..utils.meeting_utils import calculate_buyer_meeting_quota
+    
     user_id = get_jwt_identity()
     
     # Convert to int if it's a string
@@ -132,8 +134,18 @@ def get_profile():
             'error': 'Buyer profile not found'
         }), 404
     
+    # Get the profile as a dictionary
+    profile_dict = buyer_profile.to_dict()
+    
+    # Calculate meeting quota information
+    meeting_quota = calculate_buyer_meeting_quota(user_id, buyer_profile)
+    
+    # Add meeting quota information to the profile dictionary
+    profile_dict.update(meeting_quota)
+    
+    # Return the enhanced profile
     return jsonify({
-        'profile': buyer_profile.to_dict()
+        'profile': profile_dict
     }), 200
 
 @buyer.route('/profile', methods=['PUT'])
