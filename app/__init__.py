@@ -36,7 +36,11 @@ def create_app():
 
     @app.after_request
     def no_cache(response):
-        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, private'
+        response.cache_control.no_store = True
+        response.cache_control.no_cache = True
+        response.cache_control.private = True
+        response.cache_control.must_revalidate = True
+        response.cache_control.max_age = 0
         response.headers['Pragma'] = 'no-cache'
         response.headers['Expires'] = '0'
         return response
