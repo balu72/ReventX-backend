@@ -922,3 +922,714 @@ def update_accommodation(plan_id):
         'message': 'Accommodation updated successfully',
         'travel_plan': travel_plan.to_dict()
     }), 200
+@buyer.route('/travel-plans/<int:plan_id>/pickup', methods=['PUT'])
+@buyer_required
+def update_pickup(plan_id):
+    """
+    Endpoint to update pickup details
+    """
+    user_id = get_jwt_identity()
+    
+    # Convert to int if it's a string
+    if isinstance(user_id, str):
+        try:
+            user_id = int(user_id)
+        except ValueError:
+            return jsonify({'error': 'Invalid user ID'}), 400
+    
+    data = request.get_json()
+    
+    # Validate required fields
+    required_fields = ['location', 'dateTime']
+    for field in required_fields:
+        if field not in data:
+            return jsonify({'error': f'Missing required field: {field}'}), 400
+    
+    # Fetch travel plan
+    travel_plan = TravelPlan.query.filter_by(id=plan_id, user_id=user_id).first()
+    if not travel_plan:
+        return jsonify({'error': 'Travel plan not found or access denied'}), 404
+    
+    # Update pickup details
+    if not travel_plan.ground_transportation:
+        # Create new ground transportation record if it doesn't exist
+        ground_transportation = GroundTransportation(
+            travel_plan_id=plan_id,
+            pickup_location=data['location'],
+            pickup_datetime=datetime.fromisoformat(data['dateTime']),
+            pickup_vehicle_type=data.get('vehicleType', ''),
+            pickup_driver_contact=data.get('driverContact', ''),
+            # Set default values for dropoff
+            dropoff_location='',
+            dropoff_datetime=datetime.now(),
+            dropoff_vehicle_type='',
+            dropoff_driver_contact=''
+        )
+        db.session.add(ground_transportation)
+    else:
+        # Update existing ground transportation record
+        travel_plan.ground_transportation.pickup_location = data['location']
+        travel_plan.ground_transportation.pickup_datetime = datetime.fromisoformat(data['dateTime'])
+        travel_plan.ground_transportation.pickup_vehicle_type = data.get('vehicleTypeId', None)
+        travel_plan.ground_transportation.pickup_driver_contact = data.get('driverContact', '')
+    
+    db.session.commit()
+    
+    return jsonify({
+        'message': 'Pickup details updated successfully',
+        'travel_plan': travel_plan.to_dict()
+    }), 200
+
+@buyer.route('/travel-plans/<int:plan_id>/dropoff', methods=['PUT'])
+@buyer_required
+def update_dropoff(plan_id):
+    """
+    Endpoint to update dropoff details
+    """
+    user_id = get_jwt_identity()
+    
+    # Convert to int if it's a string
+    if isinstance(user_id, str):
+        try:
+            user_id = int(user_id)
+        except ValueError:
+            return jsonify({'error': 'Invalid user ID'}), 400
+    
+    data = request.get_json()
+    
+    # Validate required fields
+    required_fields = ['location', 'dateTime']
+    for field in required_fields:
+        if field not in data:
+            return jsonify({'error': f'Missing required field: {field}'}), 400
+    
+    # Fetch travel plan
+    travel_plan = TravelPlan.query.filter_by(id=plan_id, user_id=user_id).first()
+    if not travel_plan:
+        return jsonify({'error': 'Travel plan not found or access denied'}), 404
+    
+    # Update dropoff details
+    if not travel_plan.ground_transportation:
+        # Create new ground transportation record if it doesn't exist
+        ground_transportation = GroundTransportation(
+            travel_plan_id=plan_id,
+            # Set default values for pickup
+            pickup_location='',
+            pickup_datetime=datetime.now(),
+            pickup_vehicle_type='',
+            pickup_driver_contact='',
+            # Dropoff details
+            dropoff_location=data['location'],
+            dropoff_datetime=datetime.fromisoformat(data['dateTime']),
+            dropoff_vehicle_type=data.get('vehicleType', ''),
+            dropoff_driver_contact=data.get('driverContact', '')
+        )
+        db.session.add(ground_transportation)
+    else:
+        # Update existing ground transportation record
+        travel_plan.ground_transportation.dropoff_location = data['location']
+        travel_plan.ground_transportation.dropoff_datetime = datetime.fromisoformat(data['dateTime'])
+        travel_plan.ground_transportation.dropoff_vehicle_type = data.get('vehicleTypeId', None)
+        travel_plan.ground_transportation.dropoff_driver_contact = data.get('driverContact', '')
+    
+    db.session.commit()
+    
+    return jsonify({
+        'message': 'Dropoff details updated successfully',
+        'travel_plan': travel_plan.to_dict()
+    }), 200
+
+@buyer.route('/meetings', methods=['GET'])
+@buyer_required
+def get_meetings():
+    """
+    Endpoint to get buyer's meetings
+    """
+    user_id = get_jwt_identity()
+    
+    # Convert to int if it's a string
+    if isinstance(user_id, str):
+        try:
+            user_id = int(user_id)
+        except ValueError:
+            return jsonify({'error': 'Invalid user ID'}), 400
+    
+    # Get query parameters for filtering
+    status = request.args.get('status')
+    from_date = request.args.get('from_date')
+    to_date = request.args.get('to_date')
+    
+    # Build query
+    query = Meeting.query.filter_by(buyer_id=user_id)
+    
+    # Apply filters if provided
+    if status:
+        try:
+            meeting_status = MeetingStatus(status)
+            query = query.filter_by(status=meeting_status)
+        except ValueError:
+            return jsonify({'error': f'Invalid status: {status}'}), 400
+    
+    # Execute query
+    meetings = query.all()
+    
+    return jsonify({
+        'meetings': [meeting.to_dict() for meeting in meetings]
+    }), 200
+
+@buyer.route('/meetings', methods=['POST'])
+@buyer_required
+def create_meeting():
+    """
+    Endpoint to create a new meeting request
+    """
+    user_id = get_jwt_identity()
+    
+    # Convert to int if it's a string
+    if isinstance(user_id, str):
+        try:
+            user_id = int(user_id)
+        except ValueError:
+            return jsonify({'error': 'Invalid user ID'}), 400
+    
+    data = request.get_json()
+    
+    # Validate required fields
+    required_fields = ['seller_id', 'time_slot_id']
+    for field in required_fields:
+        if field not in data:
+            return jsonify({'error': f'Missing required field: {field}'}), 400
+    
+    # Check if meetings are enabled
+    meetings_enabled = SystemSetting.query.filter_by(key='meetings_enabled').first()
+    if not meetings_enabled or meetings_enabled.value != 'true':
+        return jsonify({
+            'error': 'Meeting requests are currently disabled'
+        }), 400
+
+    # Check if the seller exists
+    seller = User.query.get(data['seller_id'])
+    if not seller or seller.role != UserRole.SELLER:
+        return jsonify({
+            'error': 'Invalid seller'
+        }), 400
+    
+    # Check if the time slot exists and is available
+    time_slot = TimeSlot.query.get(data['time_slot_id'])
+    if not time_slot:
+        return jsonify({
+            'error': 'Time slot not found'
+        }), 404
+    
+    if not time_slot.is_available:
+        return jsonify({
+            'error': 'Time slot is not available'
+        }), 400
+    
+    # Check if the time slot belongs to the seller
+    if time_slot.user_id != data['seller_id']:
+        return jsonify({
+            'error': 'Time slot does not belong to the specified seller'
+        }), 400
+
+    # Create the meeting
+    meeting = Meeting(
+        buyer_id=user_id,
+        seller_id=data['seller_id'],
+        time_slot_id=data['time_slot_id'],
+        notes=data.get('notes', ''),
+        status=MeetingStatus.PENDING
+    )
+    
+    # Mark the time slot as unavailable
+    time_slot.is_available = False
+    
+    db.session.add(meeting)
+    db.session.commit()
+
+    # Link meeting_id to time_slot if supported
+    if hasattr(time_slot, 'meeting_id'):
+        time_slot.meeting_id = meeting.id
+        db.session.commit()
+    
+    return jsonify({
+        'message': 'Meeting request created successfully',
+        'meeting': meeting.to_dict()
+    }), 201
+
+@buyer.route('/meetings/<int:meeting_id>', methods=['PUT'])
+@buyer_required
+def update_meeting(meeting_id):
+    """
+    Endpoint to update meeting status
+    """
+    user_id = get_jwt_identity()
+    
+    # Convert to int if it's a string
+    if isinstance(user_id, str):
+        try:
+            user_id = int(user_id)
+        except ValueError:
+            return jsonify({'error': 'Invalid user ID'}), 400
+    
+    data = request.get_json()
+    
+    # Validate required fields
+    if 'status' not in data:
+        return jsonify({'error': 'Missing required field: status'}), 400
+    
+    # Check if meeting exists and belongs to the user
+    meeting = Meeting.query.filter_by(id=meeting_id, buyer_id=user_id).first()
+    if not meeting:
+        return jsonify({'error': 'Meeting not found or access denied'}), 404
+    
+    # Update meeting status
+    try:
+        meeting.status = MeetingStatus(data['status'])
+        db.session.commit()
+    except ValueError:
+        return jsonify({'error': f'Invalid status: {data["status"]}'}), 400
+    
+    return jsonify({
+        'message': 'Meeting updated successfully',
+        'meeting': meeting.to_dict()
+    }), 200
+
+@buyer.route('/profile/image', methods=['POST'])
+@buyer_required
+def upload_profile_image():
+    """
+    Endpoint to upload buyer profile image
+    """
+    user_id = get_jwt_identity()
+    
+    # Convert to int if it's a string
+    if isinstance(user_id, str):
+        try:
+            user_id = int(user_id)
+        except ValueError:
+            return jsonify({'error': 'Invalid user ID'}), 400
+    
+    # Check if file was uploaded
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+    
+    file = request.files['file']
+    
+    # Validate file
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+    
+    # Check file type
+    allowed_extensions = {'jpg', 'jpeg', 'png'}
+    if not '.' in file.filename or file.filename.rsplit('.', 1)[1].lower() not in allowed_extensions:
+        return jsonify({'error': 'Invalid file type. Only JPG, JPEG, and PNG files are allowed'}), 400
+    
+    # Check file size (1MB limit)
+    file.seek(0, os.SEEK_END)
+    file_size = file.tell()
+    file.seek(0)  # Reset file pointer
+    
+    if file_size > 1 * 1024 * 1024:  # 1MB
+        return jsonify({'error': 'File size exceeds 1MB limit'}), 400
+    
+    try:
+        # Get buyer profile
+        buyer_profile = BuyerProfile.query.filter_by(user_id=user_id).first()
+        if not buyer_profile:
+            return jsonify({'error': 'Buyer profile not found'}), 404
+        
+        # Get external storage credentials from environment
+        storage_url = os.getenv('EXTERNAL_STORAGE_URL')+"index.php"
+        storage_user = os.getenv('EXTERNAL_STORAGE_USER')
+        storage_password = os.getenv('EXTERNAL_STORAGE_PASSWORD')
+        ocs_url = os.getenv("EXTERNAL_STORAGE_URL")+'ocs/v2.php/apps/files_sharing/api/v1/shares'
+        ocs_headers = {'OCS-APIRequest': 'true',"Accept": "application/json"}
+        ocs_auth = (storage_user, storage_password)  # Use app password or user/pass
+        
+        if not all([storage_url, storage_user, storage_password]):
+            return jsonify({'error': 'External storage configuration missing'}), 500
+        
+        nc = Nextcloud(nextcloud_url=storage_url, nc_auth_user=storage_user, nc_auth_pass=storage_password)
+
+        # Save file to uploads directory
+        # upload_folder = os.path.join(current_app.config['UPLOAD_FOLDER'], 'profile_images')
+        buyer_base_dir_available = False
+        buyer_image_profile_dir_available = False
+        buyer_dir = f"buyer_{user_id}/"
+        remote_dir_path = f"/Photos/{buyer_dir}"
+        remote_base_profile_images_path = f"/Photos/{buyer_dir}/profile"
+        # Make base dir for buyer
+        try:
+            nc.files.listdir(remote_dir_path)
+            logging.debug(f"Found remote path:: {remote_dir_path}")
+            buyer_base_dir_available = True
+        except NextcloudException as e:
+            if e.status_code != 404:
+                raise e
+            else:
+                try:
+                    logging.info(f"Could not locate remote directory::: {remote_dir_path}::: Proceeding to create")
+                    nc.files.mkdir(remote_dir_path)
+                    logging.debug(f"Created remote directory {remote_dir_path} successfully")
+                    logging.debug("Now setting sharing permissions...")
+                    dir_sharing_data = {
+                        'path': remote_dir_path,         # Folder you created
+                        'shareType': 3,                  # Public link
+                        'permissions': 1                 # Read-only
+                    }
+                    response = requests.post(ocs_url, headers=ocs_headers, data=dir_sharing_data, auth=ocs_auth)
+
+                    if response.status_code == 200:
+                        logging.info(f"Response Text is:: {response}")
+                        share_info = response.json()
+                        link = share_info['ocs']['data']['url']
+                        logging.debug(f"Public Share URL: {link}")
+                        buyer_base_dir_available = True
+                    else:
+                        logging.debug("Failed to create share:", response.text)
+                except Exception as e:
+                    logging.debug(f"Exception while creating buyer base directory:{str(e)}")
+                    return jsonify({"Exception": f"Failed to create buyer base directory -- {remote_dir_path} - the error is ::::{str(e)}"}), 500
+
+        # If we have buyer base directory, check if we have buyer profile image directory
+        if buyer_base_dir_available: 
+            try:
+                nc.files.listdir(remote_base_profile_images_path)
+                logging.debug(f"Found remote path:: {remote_dir_path}")
+                buyer_image_profile_dir_available = True
+            except NextcloudException as e:
+                if e.status_code != 404:
+                    raise e
+                else:
+                    try:
+                        logging.info(f"Could not locate buyer profile image directory::: {remote_base_profile_images_path}::: Proceeding to create")
+                        nc.files.mkdir(remote_base_profile_images_path)
+                        logging.debug(f"Created remote directory {remote_dir_path} successfully")
+                        logging.debug("Now setting sharing permissions...")
+                        dir_sharing_data = {
+                            'path': remote_base_profile_images_path,         # Folder you created
+                            'shareType': 3,                  # Public link
+                            'permissions': 1                 # Read-only
+                        }
+                        response = requests.post(ocs_url, headers=ocs_headers, data=dir_sharing_data, auth=ocs_auth)
+                        if response.status_code == 200:
+                            logging.info(f"Response Text is:: {response}")
+                            share_info = response.json()
+                            link = share_info['ocs']['data']['url']
+                            logging.debug(f"Public Share URL: {link}")
+                            buyer_image_profile_dir_available = True
+                        else:
+                            logging.debug("Failed to create buyer profile image directtory:", response.text)
+                    except Exception as e:
+                        logging.debug(f"Exception while creating buyer buyer profile images directory:{str(e)}")
+                        return jsonify({"Exception": f"Failed to create buyer bprofile imagesase directory -- {remote_base_profile_images_path} - the error is ::::{str(e)}"}), 500
+
+
+        # Generate unique filename
+        filename = secure_filename(f"buyer_{user_id}_{int(datetime.now().timestamp())}.{file.filename.rsplit('.', 1)[1].lower()}")
+
+        # Prepare file data for upload
+        file_data = file.read()
+        file.seek(0)  # Reset for potential retry
+            
+        # Create basic auth header
+        auth_string = f"{storage_user}:{storage_password}"
+        auth_bytes = auth_string.encode('ascii')
+        auth_b64 = base64.b64encode(auth_bytes).decode('ascii')
+
+        # File upload URL
+        upload_url = f"{remote_base_profile_images_path}/{filename}"
+        
+        # Public URL for storage and reading
+        file_public_url=""
+        
+        # Upload file
+        try:        
+            buf = BytesIO(file_data)  
+            buf.seek(0)
+            logging.info(f"Uploading file :::: {upload_url}")
+            uploaded_file = nc.files.upload_stream(upload_url, buf)
+            logging.info(f"The uploaded file data is::: {(uploaded_file.name)}")
+            # Now give it a publicly available link 
+            seller_file_sharing_data = {
+                'path': upload_url,              # Uploaded file
+                'shareType': 3,                  # Public link
+                'permissions': 1                 # Read-only
+            }
+            response = requests.post(ocs_url, headers=ocs_headers, data=seller_file_sharing_data, auth=ocs_auth)
+            if response.status_code == 200:
+                result = response.json()
+                if result["ocs"]["meta"]["status"] == "ok":
+                    file_public_url = result["ocs"]["data"]["url"]
+                    logging.debug(f"Public share URL: {file_public_url}")
+                else:
+                    logging.error(f"Share API error: {result['ocs']['meta']['message']}")
+            else:
+                print("HTTP error:", response.status_code, response.text)
+        except Exception as e:
+            logging.debug(f"Exception while uploading file:{e}")
+            return jsonify({'Exception': f'Failed to upload file {upload_url}:::{str(e)}'}), 500
+        
+        # Update profile with image URL
+        image_url = file_public_url
+        buyer_profile.profile_image = image_url
+        
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Profile image uploaded successfully',
+            'profile': buyer_profile.to_dict()
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'error': f'Failed to upload profile image: {str(e)}'
+        }), 500
+
+@buyer.route('/travel-plans/<int:plan_id>/upload-ticket', methods=['POST'])
+@buyer_required
+def upload_ticket(plan_id):
+    """
+    Endpoint to upload a ticket for a travel plan
+    """
+    user_id = get_jwt_identity()
+    
+    # Convert to int if it's a string
+    if isinstance(user_id, str):
+        try:
+            user_id = int(user_id)
+        except ValueError:
+            return jsonify({'error': 'Invalid user ID'}), 400
+    
+    # Check if file was uploaded
+    if 'ticket' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+    
+    # Get section parameter
+    section = request.form.get('section')
+    if section not in ['arrival', 'departure']:
+        return jsonify({'error': 'Invalid section. Must be "arrival" or "departure"'}), 400
+    
+    file = request.files['ticket']
+    
+    # Validate file
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+    
+    # Check file type (PDF only)
+    if not file.filename.lower().endswith('.pdf'):
+        return jsonify({'error': 'Invalid file type. Only PDF files are allowed'}), 400
+    
+    # Check file size (2MB limit)
+    file.seek(0, os.SEEK_END)
+    file_size = file.tell()
+    file.seek(0)  # Reset file pointer
+    
+    if file_size > 2 * 1024 * 1024:  # 2MB
+        return jsonify({'error': 'File size exceeds 2MB limit'}), 400
+    
+    # Fetch travel plan
+    travel_plan = TravelPlan.query.filter_by(id=plan_id, user_id=user_id).first()
+    if not travel_plan:
+        return jsonify({'error': 'Travel plan not found or access denied'}), 404
+    
+    # Check if transportation record exists
+    if not travel_plan.transportation:
+        return jsonify({'error': 'Transportation record not found'}), 404
+    
+    try:
+        # Get NextCloud credentials
+        storage_url = os.getenv('EXTERNAL_STORAGE_URL')+"index.php"
+        storage_user = os.getenv('EXTERNAL_STORAGE_USER')
+        storage_password = os.getenv('EXTERNAL_STORAGE_PASSWORD')
+        ocs_url = os.getenv("EXTERNAL_STORAGE_URL")+'ocs/v2.php/apps/files_sharing/api/v1/shares'
+        ocs_headers = {'OCS-APIRequest': 'true',"Accept": "application/json"}
+        ocs_auth = (storage_user, storage_password)
+        
+        if not all([storage_url, storage_user, storage_password]):
+            return jsonify({'error': 'External storage configuration missing'}), 500
+        
+        nc = Nextcloud(nextcloud_url=storage_url, nc_auth_user=storage_user, nc_auth_pass=storage_password)
+        
+        # Create directory structure if needed
+        buyer_dir = f"buyer_{user_id}"
+        buyer_base_doc_dir = f"/Documents/{buyer_dir}"
+        tickets_dir = f"{buyer_base_doc_dir}/tickets"
+        
+        # Create base directory if it doesn't exist
+        try:
+            nc.files.listdir(buyer_base_doc_dir)
+        except NextcloudException as e:
+            if e.status_code == 404:
+                nc.files.mkdir(buyer_base_doc_dir)
+                # Set sharing permissions
+                dir_sharing_data = {
+                    'path': buyer_base_doc_dir,
+                    'shareType': 3,  # Public link
+                    'permissions': 1  # Read-only
+                }
+                requests.post(ocs_url, headers=ocs_headers, data=dir_sharing_data, auth=ocs_auth)
+        
+        # Create tickets directory if it doesn't exist
+        try:
+            nc.files.listdir(tickets_dir)
+        except NextcloudException as e:
+            if e.status_code == 404:
+                nc.files.mkdir(tickets_dir)
+                # Set sharing permissions
+                dir_sharing_data = {
+                    'path': tickets_dir,
+                    'shareType': 3,  # Public link
+                    'permissions': 1  # Read-only
+                }
+                requests.post(ocs_url, headers=ocs_headers, data=dir_sharing_data, auth=ocs_auth)
+        
+        # Generate unique filename
+        filename = secure_filename(f"{section}_ticket.pdf")
+        
+        # Upload file
+        upload_path = f"{tickets_dir}/{filename}"
+        file_data = file.read()
+        file.seek(0)
+        
+        buf = BytesIO(file_data)
+        buf.seek(0)
+        uploaded_file = nc.files.upload_stream(upload_path, buf)
+        
+        # Create public share
+        file_sharing_data = {
+            'path': upload_path,
+            'shareType': 3,  # Public link
+            'permissions': 1  # Read-only
+        }
+        response = requests.post(ocs_url, headers=ocs_headers, data=file_sharing_data, auth=ocs_auth)
+        
+        if response.status_code != 200:
+            return jsonify({'error': 'Failed to create public share for ticket'}), 500
+        
+        result = response.json()
+        if result["ocs"]["meta"]["status"] != "ok":
+            return jsonify({'error': 'Failed to create public share for ticket'}), 500
+        
+        # Get public URL
+        file_public_url = result["ocs"]["data"]["url"] + "/download"
+        
+        # Update transportation record based on section
+        if section == 'arrival':
+            travel_plan.transportation.arrival_ticket = file_public_url
+        else:  # departure
+            travel_plan.transportation.return_ticket = file_public_url
+        
+        db.session.commit()
+        
+        return jsonify({
+            'message': f'{section.capitalize()} ticket uploaded successfully',
+            'travel_plan': travel_plan.to_dict()
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'error': f'Failed to upload ticket: {str(e)}'
+        }), 500
+
+@buyer.route('/sellers', methods=['GET'])
+@buyer_required
+def get_sellers():
+    """
+    Endpoint to get list of sellers with proper profile data including state and country
+    """
+    import os
+    from ..models.models import SellerProfile
+    
+    # Get query parameters for filtering
+    search = request.args.get('search', '')
+    specialty = request.args.get('specialty', '')
+    
+    # Build query to join users with seller_profiles
+    query = db.session.query(User, SellerProfile).join(
+        SellerProfile, User.id == SellerProfile.user_id
+    ).filter(User.role == UserRole.SELLER.value).order_by(SellerProfile.business_name.asc())
+    
+    # Apply search filter if provided
+    if search:
+        query = query.filter(
+            (User.username.ilike(f'%{search}%')) | 
+            (User.business_name.ilike(f'%{search}%')) |
+            (SellerProfile.business_name.ilike(f'%{search}%'))
+        )
+    
+    # Execute query
+    results = query.all()
+    
+    # Get PUBLIC_SITE_URL from environment
+    public_site_url = os.getenv('PUBLIC_SITE_URL', 'http://localhost:3000')
+    
+    # Convert to response format
+    seller_list = []
+    for user, profile in results:
+        # Handle microsite_url - prepend PUBLIC_SITE_URL if it's a relative path
+        microsite_url = profile.microsite_url or ''
+        if microsite_url and not microsite_url.startswith('http'):
+            microsite_url = f"{public_site_url}{microsite_url}"
+        
+        seller_data = {
+            'id': user.id,
+            'name': user.username,
+            'businessName': profile.business_name or user.business_name or '',
+            'description': profile.description or user.business_description or '',
+            'location': profile.state or 'Unknown',  # Display state instead of pincode
+            'country': profile.country or 'Unknown',
+            'address': profile.address or '',
+            'pincode': profile.pincode or '',
+            'seller_type': profile.seller_type or 'Not Specified',  # Include seller type
+            'rating': 4.8,  # Placeholder - could be calculated from reviews
+            'specialties': [interest.name for interest in profile.target_market_relationships],  # Dynamic specialties from database
+            'image_url': profile.logo_url or '/images/sellers/default.jpg',
+            'isVerified': profile.is_verified,
+            # Get actual stall number from Stall table
+            'stallNo': 'Not Allocated Yet',  # Default to Not Allocated
+            'website': profile.website or '',
+            'microsite_url': microsite_url,
+            'contactEmail': profile.contact_email or user.email,
+            'contactPhone': profile.contact_phone or ''
+        }
+        
+        # Filter by specialty if provided (placeholder logic)
+        if specialty and specialty not in seller_data['specialties']:
+            continue
+        
+        # Get all allocated stall numbers for this seller
+        stalls = Stall.query.filter_by(seller_id=user.id).all()
+        stall_numbers = []
+        for stall in stalls:
+            if stall.allocated_stall_number:
+                stall_numbers.append(stall.allocated_stall_number)
+                
+        if stall_numbers:
+            seller_data['stallNo'] = ', '.join(stall_numbers)
+        
+        # Check meeting status
+        user_id = get_jwt_identity()
+        if isinstance(user_id, str):
+            try:
+                user_id = int(user_id)
+            except ValueError:
+                user_id = None
+        
+        if user_id:
+            meeting = Meeting.query.filter_by(buyer_id=user_id, seller_id=user.id).order_by(Meeting.created_at.desc()).first()
+            if meeting:
+                seller_data['meetingStatus'] = meeting.status.value
+            else:
+                seller_data['meetingStatus'] = 'none'
+        else:
+            seller_data['meetingStatus'] = 'none'
+        
+        seller_list.append(seller_data)
+    
+    return jsonify({
+        'sellers': seller_list
+    }), 200
