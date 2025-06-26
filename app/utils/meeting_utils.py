@@ -19,7 +19,7 @@ def calculate_buyer_meeting_quota(user_id, buyer_profile):
     # 1. Get all pending meetings for the current buyer
     pending_meetings = Meeting.query.filter(
         ((Meeting.buyer_id == user_id) | (Meeting.requestor_id == user_id)),
-        Meeting.status == MeetingStatus.PENDING.value
+        Meeting.status.in_([MeetingStatus.PENDING.value, MeetingStatus.PENDING.value.upper()])
     ).all()
     
     # 2. Check and update expired meetings
@@ -39,7 +39,14 @@ def calculate_buyer_meeting_quota(user_id, buyer_profile):
     # 4. Count active meetings (ACCEPTED or PENDING)
     currentMeetingRequestCount = Meeting.query.filter(
         ((Meeting.buyer_id == user_id) | (Meeting.requestor_id == user_id)),
-        ((Meeting.status == MeetingStatus.ACCEPTED.value) | (Meeting.status == MeetingStatus.PENDING.value))
+        ((Meeting.status.in_([MeetingStatus.ACCEPTED.value, MeetingStatus.ACCEPTED.value.upper()])) | 
+         (Meeting.status.in_([MeetingStatus.PENDING.value, MeetingStatus.PENDING.value.upper()])))
+    ).count()
+    
+    # Count ACCEPTED meetings only
+    currentBuyerAcceptedMeetingCount = Meeting.query.filter(
+        ((Meeting.buyer_id == user_id) | (Meeting.requestor_id == user_id)),
+        (Meeting.status.in_([MeetingStatus.ACCEPTED.value, MeetingStatus.ACCEPTED.value.upper()]))
     ).count()
     
     # 5. Get max meetings allowed based on buyer category
@@ -63,16 +70,32 @@ def calculate_buyer_meeting_quota(user_id, buyer_profile):
     
     if event_start_date and event_end_date and event_start_date.value and event_end_date.value:
         try:
-            start_date = datetime.strptime(event_start_date.value, '%Y-%m-%d')
-            end_date = datetime.strptime(event_end_date.value, '%Y-%m-%d')
+            # Parse ISO 8601 format (e.g., 2025-07-11T00:00:00.000Z)
+            # First, extract just the date part (YYYY-MM-DD)
+            start_date_str = event_start_date.value.split('T')[0]
+            end_date_str = event_end_date.value.split('T')[0]
+            
+            # Then parse with the correct format
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
+            
             event_days = (end_date - start_date).days + 1  # +1 to include both start and end days
-        except (ValueError, TypeError):
-            event_days = 1  # Default to 1 day if dates are invalid
+        except (ValueError, TypeError, IndexError):
+            event_days = 3  # Default to 3 days if dates are invalid (typical event duration)
     else:
-        event_days = 1  # Default to 1 day if settings are missing
+        event_days = 3  # Default to 3 days if settings are missing (typical event duration)
     
-    # 7. Calculate total allowed meeting requests
-    buyerMeetingRequestQuota = 2 * max_meetings_per_day * event_days
+    # 7. Calculate allowed meeting quota (without multiplying by 2)
+    buyerAllowedMeetingQuota = max_meetings_per_day * event_days
+    
+    # Calculate remaining accept count
+    buyerRemainingAcceptCount = max(0, buyerAllowedMeetingQuota - currentBuyerAcceptedMeetingCount)
+    
+    # Determine if buyer can accept more meeting requests
+    canBuyerAcceptMeetingRequest = currentBuyerAcceptedMeetingCount < buyerAllowedMeetingQuota
+    
+    # Calculate total meeting request quota (keep this for backward compatibility)
+    buyerMeetingRequestQuota = buyerAllowedMeetingQuota * 2
     
     # 8. Calculate remaining meeting requests
     remainingMeetingRequestCount = max(0, buyerMeetingRequestQuota - currentMeetingRequestCount)
@@ -82,7 +105,11 @@ def calculate_buyer_meeting_quota(user_id, buyer_profile):
         'buyerMeetingRequestQuota': buyerMeetingRequestQuota,
         'buyerMeetingQuotaExceeded': currentMeetingRequestCount >= buyerMeetingRequestQuota,
         'currentMeetingRequestCount': currentMeetingRequestCount,
-        'remainingMeetingRequestCount': remainingMeetingRequestCount
+        'remainingMeetingRequestCount': remainingMeetingRequestCount,
+        'currentBuyerAcceptedMeetingCount': currentBuyerAcceptedMeetingCount,
+        'buyerAllowedMeetingQuota': buyerAllowedMeetingQuota,
+        'buyerRemainingAcceptCount': buyerRemainingAcceptCount,
+        'canBuyerAcceptMeetingRequest': canBuyerAcceptMeetingRequest
     }
 
 
@@ -104,7 +131,7 @@ def calculate_seller_meeting_quota(seller_id, seller_profile):
     # 1. Get all pending meetings for the current seller
     pending_meetings = Meeting.query.filter(
         ((Meeting.seller_id == seller_id) | (Meeting.requestor_id == seller_id)),
-        Meeting.status == MeetingStatus.PENDING.value
+        Meeting.status.in_([MeetingStatus.PENDING.value, MeetingStatus.PENDING.value.upper()])
     ).all()
     
     # 2. Check and update expired meetings
@@ -124,7 +151,14 @@ def calculate_seller_meeting_quota(seller_id, seller_profile):
     # 4. Count active meetings (ACCEPTED or PENDING)
     currentMeetingRequestCount = Meeting.query.filter(
         ((Meeting.seller_id == seller_id) | (Meeting.requestor_id == seller_id)),
-        ((Meeting.status == MeetingStatus.ACCEPTED.value) | (Meeting.status == MeetingStatus.PENDING.value))
+        ((Meeting.status.in_([MeetingStatus.ACCEPTED.value, MeetingStatus.ACCEPTED.value.upper()])) | 
+         (Meeting.status.in_([MeetingStatus.PENDING.value, MeetingStatus.PENDING.value.upper()])))
+    ).count()
+    
+    # Count ACCEPTED meetings only
+    currentSellerAcceptedMeetingCount = Meeting.query.filter(
+        ((Meeting.seller_id == seller_id) | (Meeting.requestor_id == seller_id)),
+        (Meeting.status.in_([MeetingStatus.ACCEPTED.value, MeetingStatus.ACCEPTED.value.upper()]))
     ).count()
     
     # 5. Calculate event duration in days
@@ -133,13 +167,20 @@ def calculate_seller_meeting_quota(seller_id, seller_profile):
     
     if event_start_date and event_end_date and event_start_date.value and event_end_date.value:
         try:
-            start_date = datetime.strptime(event_start_date.value, '%Y-%m-%d')
-            end_date = datetime.strptime(event_end_date.value, '%Y-%m-%d')
+            # Parse ISO 8601 format (e.g., 2025-07-11T00:00:00.000Z)
+            # First, extract just the date part (YYYY-MM-DD)
+            start_date_str = event_start_date.value.split('T')[0]
+            end_date_str = event_end_date.value.split('T')[0]
+            
+            # Then parse with the correct format
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
+            
             event_days = (end_date - start_date).days + 1  # +1 to include both start and end days
-        except (ValueError, TypeError):
-            event_days = 1  # Default to 1 day if dates are invalid
+        except (ValueError, TypeError, IndexError):
+            event_days = 3  # Default to 3 days if dates are invalid (typical event duration)
     else:
-        event_days = 1  # Default to 1 day if settings are missing
+        event_days = 3  # Default to 3 days if settings are missing (typical event duration)
     
     # 6. Calculate sellerMaxMeetingsPerDay
     # Initialize variables
@@ -167,8 +208,17 @@ def calculate_seller_meeting_quota(seller_id, seller_profile):
                 # Default case - assume 1 attendee
                 seller_max_meetings_per_day += 1 * max_meetings_per_attendee_per_day
     
-    # 7. Calculate max meetings for this seller
-    sellerMeetingRequestQuota = event_days * seller_max_meetings_per_day * 2
+    # 7. Calculate allowed meeting quota (without multiplying by 2)
+    sellerAllowedMeetingQuota = event_days * seller_max_meetings_per_day
+    
+    # Calculate remaining accept count
+    sellerRemainingAcceptCount = max(0, sellerAllowedMeetingQuota - currentSellerAcceptedMeetingCount)
+    
+    # Determine if seller can accept more meeting requests
+    canSellerAcceptMeetingRequest = currentSellerAcceptedMeetingCount < sellerAllowedMeetingQuota
+    
+    # Calculate total meeting request quota (keep this for backward compatibility)
+    sellerMeetingRequestQuota = sellerAllowedMeetingQuota * 2
     
     # 8. Calculate remaining meeting requests
     remainingMeetingRequestCount = max(0, sellerMeetingRequestQuota - currentMeetingRequestCount)
@@ -178,5 +228,9 @@ def calculate_seller_meeting_quota(seller_id, seller_profile):
         'sellerMeetingRequestQuota': sellerMeetingRequestQuota,
         'sellerMeetingQuotaExceeded': currentMeetingRequestCount >= sellerMeetingRequestQuota,
         'currentMeetingRequestCount': currentMeetingRequestCount,
-        'remainingMeetingRequestCount': remainingMeetingRequestCount
+        'remainingMeetingRequestCount': remainingMeetingRequestCount,
+        'currentSellerAcceptedMeetingCount': currentSellerAcceptedMeetingCount,
+        'sellerAllowedMeetingQuota': sellerAllowedMeetingQuota,
+        'sellerRemainingAcceptCount': sellerRemainingAcceptCount,
+        'canSellerAcceptMeetingRequest': canSellerAcceptMeetingRequest
     }
