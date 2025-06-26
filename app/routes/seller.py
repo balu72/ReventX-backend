@@ -17,6 +17,7 @@ from ..models import (
     MigrationMappingSellers, SystemSetting
 )
 from ..utils.auth import seller_required, admin_required
+from ..utils.meeting_utils import calculate_seller_meeting_quota
 
 seller = Blueprint('seller', __name__, url_prefix='/api/sellers')
 
@@ -49,8 +50,19 @@ def get_sellers():
     if target_market:
         seller_profiles = [s for s in seller_profiles if s.target_market == target_market]
     
+    # Prepare response data with meeting quota information
+    sellers_data = []
+    for profile in seller_profiles:
+        seller_dict = profile.to_dict()
+        
+        # Calculate meeting quota and add to profile data
+        meeting_quota = calculate_seller_meeting_quota(profile.user_id, profile)
+        seller_dict.update(meeting_quota)
+        
+        sellers_data.append(seller_dict)
+    
     return jsonify({
-        'sellers': [s.to_dict() for s in seller_profiles]
+        'sellers': sellers_data
     }), 200
 
 @seller.route('/<int:seller_id>', methods=['GET'])
@@ -86,8 +98,13 @@ def get_seller(seller_id):
             else:
                 seller_profile.microsite_url = public_site_url + seller_profile.microsite_url
     
+    # Get seller data and add meeting quota information
+    seller_data = seller_profile.to_dict()
+    meeting_quota = calculate_seller_meeting_quota(seller_id, seller_profile)
+    seller_data.update(meeting_quota)
+    
     return jsonify({
-        'seller': seller_profile.to_dict()
+        'seller': seller_data
     }), 200
 
 @seller.route('/profile', methods=['GET'])
@@ -151,8 +168,13 @@ def get_own_profile():
             else:
                 seller_profile.microsite_url = public_site_url + seller_profile.microsite_url
     
+    # Get seller data and add meeting quota information
+    seller_data = seller_profile.to_dict()
+    meeting_quota = calculate_seller_meeting_quota(user_id, seller_profile)
+    seller_data.update(meeting_quota)
+    
     return jsonify({
-        'seller': seller_profile.to_dict()
+        'seller': seller_data
     }), 200
 
 # helper function for creating a URL
