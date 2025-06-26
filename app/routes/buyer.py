@@ -1311,7 +1311,7 @@ def get_sellers():
     # Build query to join users with seller_profiles
     query = db.session.query(User, SellerProfile).join(
         SellerProfile, User.id == SellerProfile.user_id
-    ).filter(User.role == UserRole.SELLER.value)
+    ).filter(User.role == UserRole.SELLER.value).order_by(SellerProfile.business_name.asc())
     
     # Apply search filter if provided
     if search:
