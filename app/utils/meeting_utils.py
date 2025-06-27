@@ -29,7 +29,7 @@ def calculate_buyer_meeting_quota(user_id, buyer_profile):
     for meeting in pending_meetings:
         # If created_at is null/empty or if it's more than 48 hours old, mark as expired
         if not meeting.created_at or (current_time - meeting.created_at).total_seconds() > 48 * 3600:
-            meeting.status = MeetingStatus.EXPIRED.value
+            meeting.status = MeetingStatus.EXPIRED
             expired_meetings.append(meeting)
     
     # 3. Commit changes if any meetings were updated
@@ -141,7 +141,7 @@ def calculate_seller_meeting_quota(seller_id, seller_profile):
     for meeting in pending_meetings:
         # If created_at is null/empty or if it's more than 48 hours old, mark as expired
         if not meeting.created_at or (current_time - meeting.created_at).total_seconds() > 48 * 3600:
-            meeting.status = MeetingStatus.EXPIRED.value
+            meeting.status = MeetingStatus.EXPIRED
             expired_meetings.append(meeting)
     
     # 3. Commit changes if any meetings were updated
