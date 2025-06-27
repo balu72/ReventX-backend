@@ -85,8 +85,8 @@ def calculate_buyer_meeting_quota(user_id, buyer_profile):
     else:
         event_days = 3  # Default to 3 days if settings are missing (typical event duration)
     
-    # 7. Calculate allowed meeting quota (without multiplying by 2)
-    buyerAllowedMeetingQuota = max_meetings_per_day * event_days
+    # 7. Calculate allowed meeting quota - A buyer will attend only one day so we don't multiply by event_days
+    buyerAllowedMeetingQuota = max_meetings_per_day  # * event_days
     
     # Calculate remaining accept count
     buyerRemainingAcceptCount = max(0, buyerAllowedMeetingQuota - currentBuyerAcceptedMeetingCount)
@@ -94,7 +94,7 @@ def calculate_buyer_meeting_quota(user_id, buyer_profile):
     # Determine if buyer can accept more meeting requests
     canBuyerAcceptMeetingRequest = currentBuyerAcceptedMeetingCount < buyerAllowedMeetingQuota
     
-    # Calculate total meeting request quota (keep this for backward compatibility)
+    # Calculate total meeting request quota - Allowed requests is twice the allowed meetings
     buyerMeetingRequestQuota = buyerAllowedMeetingQuota * 2
     
     # 8. Calculate remaining meeting requests

@@ -31,8 +31,8 @@ def create_app():
     def log_request_info():
         app.logger.debug('Request: %s %s', request.method, request.url)
         app.logger.debug('Headers: %s', dict(request.headers))
-        if request.get_data():
-            app.logger.debug('Body: %s', request.get_data())
+        #if request.get_data():
+        #    app.logger.debug('Body: %s', request.get_data())
 
     @app.after_request
     def no_cache(response):
@@ -46,7 +46,7 @@ def create_app():
         return response
 
     CORS(app)
-    CORS(app, resources={r"/api/*": {"origins": ["http://localhost", "http://localhost:3000", "http://localhost:80","http://localhost:8080", "http://dechivo.com", "https://dechivo.com", "http://splash25-frontend:8080", "http://frontend:8080"]}})
+    #CORS(app, resources={r"/api/*": {"origins": ["http://localhost", "http://localhost:3000", "http://localhost:80","http://localhost:8080", "http://dechivo.com", "https://dechivo.com", "http://splash25-frontend:8080", "http://frontend:8080"]}})
 
     # Configure SQLAlchemy
     app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URI', 'postgresql://splash25user:splash25password@localhost:5432/splash25_core_db')
