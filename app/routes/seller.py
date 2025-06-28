@@ -85,14 +85,17 @@ def get_seller(seller_id):
         }), 400
     # Calculate meeting quota for the seller
     meeting_quota = calculate_seller_meeting_quota(seller_id, seller_profile)
+    
+    # Initialize with the original microsite URL (or empty string if None)
+    seller_full_microsite_url = seller_profile.microsite_url or ''
 
-    # Ensure microsite URL has full domain prefix if needed (for response only)
+    # Check if we need to add protocol prefix
     if (seller_profile.microsite_url and 
         not seller_profile.microsite_url.startswith(('http://', 'https://'))):
         
         public_site_url = os.getenv('PUBLIC_SITE_URL', '')
-        seller_full_microsite_url = ''
-        # If PUBLIC_SITE_URL is set, concatenate it with the microsite URL
+        
+        # Only modify if PUBLIC_SITE_URL is available
         if public_site_url:
             # Handle URL concatenation properly
             if public_site_url.endswith('/') and seller_profile.microsite_url.startswith('/'):
@@ -101,6 +104,7 @@ def get_seller(seller_id):
                 seller_full_microsite_url = public_site_url + '/' + seller_profile.microsite_url
             else:
                 seller_full_microsite_url = public_site_url + seller_profile.microsite_url
+        # If no PUBLIC_SITE_URL, seller_full_microsite_url keeps the original microsite_url
     # Get seller data and add meeting quota information
     seller_data = seller_profile.to_dict()
     seller_data["seller_full_microsite_url"] = seller_full_microsite_url
@@ -157,13 +161,17 @@ def get_own_profile():
 
     # Calculate meeting quota for the seller
     meeting_quota = calculate_seller_meeting_quota(user_id, seller_profile)
-
-    # Ensure microsite URL has full domain prefix if needed (for response only)
+    
+    # Initialize with the original microsite URL (or empty string if None)
+    seller_full_microsite_url = seller_profile.microsite_url or ''
+    
+    # Check if we need to add protocol prefix
     if (seller_profile.microsite_url and 
         not seller_profile.microsite_url.startswith(('http://', 'https://'))):
         
         public_site_url = os.getenv('PUBLIC_SITE_URL', '')
-        seller_full_microsite_url = ''
+        
+        # Only modify if PUBLIC_SITE_URL is available
         if public_site_url:
             # Handle URL concatenation properly
             if public_site_url.endswith('/') and seller_profile.microsite_url.startswith('/'):
@@ -172,6 +180,7 @@ def get_own_profile():
                 seller_full_microsite_url = public_site_url + '/' + seller_profile.microsite_url
             else:
                 seller_full_microsite_url = public_site_url + seller_profile.microsite_url
+        # If no PUBLIC_SITE_URL, seller_full_microsite_url keeps the original microsite_url
     
     # Get seller data and add meeting quota information
     seller_data = seller_profile.to_dict()

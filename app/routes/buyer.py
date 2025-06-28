@@ -1570,10 +1570,24 @@ def get_sellers():
     # Convert to response format
     seller_list = []
     for user, profile in results:
-        # Handle microsite_url - prepend PUBLIC_SITE_URL if it's a relative path
-        microsite_url = profile.microsite_url or ''
-        if microsite_url and not microsite_url.startswith('http'):
-            microsite_url = f"{public_site_url}{microsite_url}"
+        # Handle full_microsite_url construction - same logic as in seller.py
+        seller_full_microsite_url = profile.microsite_url or ''
+        
+        # Check if we need to add protocol prefix
+        if (profile.microsite_url and 
+            not profile.microsite_url.startswith(('http://', 'https://'))):
+            
+            public_site_url_env = os.getenv('PUBLIC_SITE_URL', '')
+            
+            # Only modify if PUBLIC_SITE_URL is available
+            if public_site_url_env:
+                # Handle URL concatenation properly
+                if public_site_url_env.endswith('/') and profile.microsite_url.startswith('/'):
+                    seller_full_microsite_url = public_site_url_env + profile.microsite_url[1:]
+                elif not public_site_url_env.endswith('/') and not profile.microsite_url.startswith('/'):
+                    seller_full_microsite_url = public_site_url_env + '/' + profile.microsite_url
+                else:
+                    seller_full_microsite_url = public_site_url_env + profile.microsite_url
         
         seller_data = {
             'id': user.id,
@@ -1592,7 +1606,7 @@ def get_sellers():
             # Get actual stall number from Stall table
             'stallNo': 'Not Allocated Yet',  # Default to Not Allocated
             'website': profile.website or '',
-            'microsite_url': microsite_url,
+            'full_microsite_url': seller_full_microsite_url,
             'contactEmail': profile.contact_email or user.email,
             'contactPhone': profile.contact_phone or ''
         }
