@@ -83,24 +83,27 @@ def get_seller(seller_id):
         return jsonify({
             'error': 'User is not a seller'
         }), 400
-    
+    # Calculate meeting quota for the seller
+    meeting_quota = calculate_seller_meeting_quota(seller_id, seller_profile)
+
     # Ensure microsite URL has full domain prefix if needed (for response only)
     if (seller_profile.microsite_url and 
         not seller_profile.microsite_url.startswith(('http://', 'https://'))):
         
         public_site_url = os.getenv('PUBLIC_SITE_URL', '')
+        seller_full_microsite_url = ''
+        # If PUBLIC_SITE_URL is set, concatenate it with the microsite URL
         if public_site_url:
             # Handle URL concatenation properly
             if public_site_url.endswith('/') and seller_profile.microsite_url.startswith('/'):
-                seller_profile.microsite_url = public_site_url + seller_profile.microsite_url[1:]
+                seller_full_microsite_url = public_site_url + seller_profile.microsite_url[1:]
             elif not public_site_url.endswith('/') and not seller_profile.microsite_url.startswith('/'):
-                seller_profile.microsite_url = public_site_url + '/' + seller_profile.microsite_url
+                seller_full_microsite_url = public_site_url + '/' + seller_profile.microsite_url
             else:
-                seller_profile.microsite_url = public_site_url + seller_profile.microsite_url
-    
+                seller_full_microsite_url = public_site_url + seller_profile.microsite_url
     # Get seller data and add meeting quota information
     seller_data = seller_profile.to_dict()
-    meeting_quota = calculate_seller_meeting_quota(seller_id, seller_profile)
+    seller_data["seller_full_microsite_url"] = seller_full_microsite_url
     seller_data.update(meeting_quota)
     
     return jsonify({
@@ -139,11 +142,6 @@ def get_own_profile():
             status='active',
             is_verified=False
         )
-        
-        # Generate and save a microsite URL for the new profile
-        microsite_url = _generate_microsite_url_for_profile(seller_profile)
-        seller_profile.microsite_url = microsite_url
-
         try:
             db.session.add(seller_profile)
             db.session.commit()
@@ -153,24 +151,31 @@ def get_own_profile():
                 'error': 'Failed to create seller profile',
                 'message': str(e)
             }), 500
-    
+    # Generate and save a microsite URL for the new profile
+    microsite_url = _generate_microsite_url_for_profile(seller_profile)
+    seller_profile.microsite_url = microsite_url
+
+    # Calculate meeting quota for the seller
+    meeting_quota = calculate_seller_meeting_quota(user_id, seller_profile)
+
     # Ensure microsite URL has full domain prefix if needed (for response only)
     if (seller_profile.microsite_url and 
         not seller_profile.microsite_url.startswith(('http://', 'https://'))):
         
         public_site_url = os.getenv('PUBLIC_SITE_URL', '')
+        seller_full_microsite_url = ''
         if public_site_url:
             # Handle URL concatenation properly
             if public_site_url.endswith('/') and seller_profile.microsite_url.startswith('/'):
-                seller_profile.microsite_url = public_site_url + seller_profile.microsite_url[1:]
+                seller_full_microsite_url = public_site_url + seller_profile.microsite_url[1:]
             elif not public_site_url.endswith('/') and not seller_profile.microsite_url.startswith('/'):
-                seller_profile.microsite_url = public_site_url + '/' + seller_profile.microsite_url
+                seller_full_microsite_url = public_site_url + '/' + seller_profile.microsite_url
             else:
-                seller_profile.microsite_url = public_site_url + seller_profile.microsite_url
+                seller_full_microsite_url = public_site_url + seller_profile.microsite_url
     
     # Get seller data and add meeting quota information
     seller_data = seller_profile.to_dict()
-    meeting_quota = calculate_seller_meeting_quota(user_id, seller_profile)
+    seller_data["seller_full_microsite_url"] = seller_full_microsite_url
     seller_data.update(meeting_quota)
     
     return jsonify({
