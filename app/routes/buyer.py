@@ -1589,6 +1589,22 @@ def get_sellers():
                 else:
                     seller_full_microsite_url = public_site_url_env + profile.microsite_url
         
+        # Construct contact person name from available fields
+        contact_person_name = ''
+        if profile.first_name or profile.last_name:
+            # Build name from first_name and last_name
+            name_parts = []
+            if profile.salutation:
+                name_parts.append(profile.salutation)
+            if profile.first_name:
+                name_parts.append(profile.first_name)
+            if profile.last_name:
+                name_parts.append(profile.last_name)
+            contact_person_name = ' '.join(name_parts)
+        else:
+            # Fall back to business name if personal name not available
+            contact_person_name = profile.business_name or user.business_name or user.username
+
         seller_data = {
             'id': user.id,
             'name': user.username,
@@ -1608,7 +1624,10 @@ def get_sellers():
             'website': profile.website or '',
             'full_microsite_url': seller_full_microsite_url,
             'contactEmail': profile.contact_email or user.email,
-            'contactPhone': profile.contact_phone or ''
+            'contactPhone': profile.contact_phone or '',
+            # Add contact person and designation fields
+            'contactPersonName': contact_person_name,
+            'designation': profile.designation or ''
         }
         
         # Filter by specialty if provided (placeholder logic)

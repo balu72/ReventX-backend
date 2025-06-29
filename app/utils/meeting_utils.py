@@ -36,7 +36,13 @@ def calculate_buyer_meeting_quota(user_id, buyer_profile):
     if expired_meetings:
         db.session.commit()
     
-    # 4. Count active meetings (ACCEPTED or PENDING)
+    # 4. Count pending meetings after expiration cleanup
+    currentPendingMeetingCount = Meeting.query.filter(
+        ((Meeting.buyer_id == user_id) | (Meeting.requestor_id == user_id)),
+        Meeting.status.in_([MeetingStatus.PENDING.value, MeetingStatus.PENDING.value.upper()])
+    ).count()
+    
+    # Count active meetings (ACCEPTED or PENDING)
     currentMeetingRequestCount = Meeting.query.filter(
         ((Meeting.buyer_id == user_id) | (Meeting.requestor_id == user_id)),
         ((Meeting.status.in_([MeetingStatus.ACCEPTED.value, MeetingStatus.ACCEPTED.value.upper()])) | 
@@ -97,8 +103,8 @@ def calculate_buyer_meeting_quota(user_id, buyer_profile):
     # Calculate total meeting request quota - Allowed requests is twice the allowed meetings
     buyerMeetingRequestQuota = buyerAllowedMeetingQuota * 2
     
-    # 8. Calculate remaining meeting requests
-    remainingMeetingRequestCount = max(0, buyerMeetingRequestQuota - currentMeetingRequestCount)
+    # 8. Calculate remaining meeting requests using new formula
+    remainingMeetingRequestCount = max(0, buyerMeetingRequestQuota - (2 * currentBuyerAcceptedMeetingCount) - currentPendingMeetingCount)
     
     # Return the meeting quota information
     return {
@@ -109,7 +115,8 @@ def calculate_buyer_meeting_quota(user_id, buyer_profile):
         'currentBuyerAcceptedMeetingCount': currentBuyerAcceptedMeetingCount,
         'buyerAllowedMeetingQuota': buyerAllowedMeetingQuota,
         'buyerRemainingAcceptCount': buyerRemainingAcceptCount,
-        'canBuyerAcceptMeetingRequest': canBuyerAcceptMeetingRequest
+        'canBuyerAcceptMeetingRequest': canBuyerAcceptMeetingRequest,
+        'buyerPendingMeetingRequestCount': currentPendingMeetingCount
     }
 
 
@@ -148,7 +155,13 @@ def calculate_seller_meeting_quota(seller_id, seller_profile):
     if expired_meetings:
         db.session.commit()
     
-    # 4. Count active meetings (ACCEPTED or PENDING)
+    # 4. Count pending meetings after expiration cleanup
+    currentPendingMeetingCount = Meeting.query.filter(
+        ((Meeting.seller_id == seller_id) | (Meeting.requestor_id == seller_id)),
+        Meeting.status.in_([MeetingStatus.PENDING.value, MeetingStatus.PENDING.value.upper()])
+    ).count()
+    
+    # Count active meetings (ACCEPTED or PENDING)
     currentMeetingRequestCount = Meeting.query.filter(
         ((Meeting.seller_id == seller_id) | (Meeting.requestor_id == seller_id)),
         ((Meeting.status.in_([MeetingStatus.ACCEPTED.value, MeetingStatus.ACCEPTED.value.upper()])) | 
@@ -220,8 +233,8 @@ def calculate_seller_meeting_quota(seller_id, seller_profile):
     # Calculate total meeting request quota (keep this for backward compatibility)
     sellerMeetingRequestQuota = sellerAllowedMeetingQuota * 2
     
-    # 8. Calculate remaining meeting requests
-    remainingMeetingRequestCount = max(0, sellerMeetingRequestQuota - currentMeetingRequestCount)
+    # 8. Calculate remaining meeting requests using new formula
+    remainingMeetingRequestCount = max(0, sellerMeetingRequestQuota - (2 * currentSellerAcceptedMeetingCount) - currentPendingMeetingCount)
     
     # Return the meeting quota information
     return {
@@ -232,5 +245,6 @@ def calculate_seller_meeting_quota(seller_id, seller_profile):
         'currentSellerAcceptedMeetingCount': currentSellerAcceptedMeetingCount,
         'sellerAllowedMeetingQuota': sellerAllowedMeetingQuota,
         'sellerRemainingAcceptCount': sellerRemainingAcceptCount,
-        'canSellerAcceptMeetingRequest': canSellerAcceptMeetingRequest
+        'canSellerAcceptMeetingRequest': canSellerAcceptMeetingRequest,
+        'sellerPendingMeetingRequestCount': currentPendingMeetingCount
     }

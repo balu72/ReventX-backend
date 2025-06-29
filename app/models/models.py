@@ -470,6 +470,16 @@ class Meeting(db.Model):
     attendee = db.relationship('SellerAttendee', foreign_keys=[attendee_id], backref=db.backref('meetings', lazy=True))  # Added relationship
     
     def to_dict(self):
+        # Get seller's stall information
+        seller_stall = None
+        if self.seller:
+            # Query for the seller's allocated stall
+            from sqlalchemy.orm import sessionmaker
+            seller_stall = db.session.query(Stall).filter_by(
+                seller_id=self.seller.id, 
+                is_allocated=True
+            ).first()
+        
         return {
             'id': self.id,
             'buyer_id': self.buyer_id,
@@ -493,7 +503,8 @@ class Meeting(db.Model):
                 'id': self.seller.id,
                 'username': self.seller.username,
                 'email': self.seller.email,
-                'business_name': self.seller.seller_profile.business_name if self.seller.seller_profile else self.seller.business_name
+                'business_name': self.seller.seller_profile.business_name if self.seller.seller_profile else self.seller.business_name,
+                'stall_number': seller_stall.allocated_stall_number if seller_stall else None
             },
             'requestor': {  # Added requestor information
                 'id': self.requestor.id,
