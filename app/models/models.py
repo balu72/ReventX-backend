@@ -628,6 +628,8 @@ class Transportation(db.Model):
             'id': self.id,
             'travel_plan_id': self.travel_plan_id,
             'type': self.type,
+            'outbound_type': self.outbound_type,  # Expose outbound_type at top level
+            'return_type': self.return_type,      # Expose return_type at top level
             'outbound': {
                 'type': self.outbound_type or self.type,  # Use individual type or fall back to main type
                 'carrier': self.outbound_carrier,
