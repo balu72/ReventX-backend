@@ -74,12 +74,14 @@ def create_app():
     from .routes.health import health_bp
     from .routes.stall import stall
     from .routes.stall_types import stall_types
+    from .routes.admin_reports import admin_reports
     
     app.register_blueprint(main)
     app.register_blueprint(auth)
     app.register_blueprint(buyer)
     app.register_blueprint(seller)
     app.register_blueprint(admin)
+    app.register_blueprint(admin_reports)
     app.register_blueprint(system)
     app.register_blueprint(timeslot)
     app.register_blueprint(meeting)
