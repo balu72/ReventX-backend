@@ -407,18 +407,19 @@ class Stall(db.Model):
     __tablename__ = 'stalls'
     
     id = db.Column(db.Integer, primary_key=True)
-    seller_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
-    stall_type_id = db.Column(db.Integer, db.ForeignKey('stall_types.id'), nullable=False)
+    seller_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    stall_type_id = db.Column(db.Integer, db.ForeignKey('stall_types.id'), nullable=True)
     number = db.Column(db.String(20), nullable=False)
     
-    # Enhanced fields
-    allocated_stall_number = db.Column(db.String(20), nullable=True)
+    # Enhanced fields - matching actual database schema
+    allocated_stall_number = db.Column(db.String(15), nullable=True)  # varchar(15) in DB
     fascia_name = db.Column(db.String(100), nullable=True)
     is_allocated = db.Column(db.Boolean, default=False)
+    stall_id = db.Column(db.Integer, nullable=True)  # References stall_inventory.id (no FK constraint)
     
     # Timestamps
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, onupdate=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=True)
     
     # Relationships
     seller = db.relationship('User', backref=db.backref('stalls', lazy=True))
