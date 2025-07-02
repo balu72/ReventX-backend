@@ -101,7 +101,7 @@ def update_stall_type(stall_type_id):
         
         data = request.get_json()
         
-        # Update fields if provided
+        # Update fields if provided and not null (but allow 0 values)
         if 'name' in data:
             # Check if new name conflicts with existing stall types
             existing_stall_type = StallType.query.filter_by(name=data['name']).filter(StallType.id != stall_type_id).first()
@@ -109,34 +109,34 @@ def update_stall_type(stall_type_id):
                 return jsonify({'error': 'Stall type name already exists'}), 400
             stall_type.name = data['name']
         
-        if 'price' in data:
+        if 'price' in data and data['price'] is not None:
             stall_type.price = float(data['price'])
         
-        if 'attendees' in data:
+        if 'attendees' in data and data['attendees'] is not None:
             stall_type.attendees = int(data['attendees'])
         
-        if 'max_meetings_per_attendee' in data:
+        if 'max_meetings_per_attendee' in data and data['max_meetings_per_attendee'] is not None:
             stall_type.max_meetings_per_attendee = int(data['max_meetings_per_attendee'])
         
-        if 'min_meetings_per_attendee' in data:
+        if 'min_meetings_per_attendee' in data and data['min_meetings_per_attendee'] is not None:
             stall_type.min_meetings_per_attendee = int(data['min_meetings_per_attendee'])
         
         if 'size' in data:
             stall_type.size = data['size']
         
-        if 'saleable' in data:
+        if 'saleable' in data and data['saleable'] is not None:
             stall_type.saleable = bool(data['saleable'])
         
         if 'inclusions' in data:
             stall_type.inclusions = data['inclusions']
         
-        if 'dinner_passes' in data:
+        if 'dinner_passes' in data and data['dinner_passes'] is not None:
             stall_type.dinner_passes = int(data['dinner_passes'])
         
-        if 'max_additional_seller_passes' in data:
+        if 'max_additional_seller_passes' in data and data['max_additional_seller_passes'] is not None:
             stall_type.max_additional_seller_passes = int(data['max_additional_seller_passes'])
         
-        if 'price_per_additional_pass' in data:
+        if 'price_per_additional_pass' in data and data['price_per_additional_pass'] is not None:
             stall_type.price_per_additional_pass = int(data['price_per_additional_pass'])
         
         db.session.commit()
