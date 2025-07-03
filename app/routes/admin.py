@@ -3,11 +3,13 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 import pandas as pd
 import re
 import secrets
+import logging
 from datetime import datetime, timedelta
 from ..utils.auth import admin_required
 from ..models import db, User, UserRole, InvitedBuyer, PendingBuyer, DomainRestriction, Meeting, Listing, SellerProfile, BuyerProfile, BuyerCategory, HostProperty, TravelPlan, Accommodation, TransportType, SellerFinancialInfo
 from sqlalchemy import func
 from ..utils.email_service import send_invitation_email, send_approval_email, send_rejection_email
+from ..utils.accommodation_utils import calculate_host_property_statistics
 
 admin = Blueprint('admin', __name__, url_prefix='/api/admin')
 
@@ -1813,44 +1815,18 @@ def allocate_accommodation_to_buyer(buyer_id):
         )
         
         db.session.add(new_accommodation)
-        db.session.commit()
         
-        # Update host property statistics
-        try:
-            # Count accommodations by room type for this property
-            shared_count = Accommodation.query.filter_by(
-                host_property_id=data['host_property_id'],
-                room_type='shared'
-            ).count()
-            
-            single_count = Accommodation.query.filter_by(
-                host_property_id=data['host_property_id'],
-                room_type='single'
-            ).count()
-            
-            # Calculate number_rooms_allocated using new formula
-            # Formula: (shared_count // 2) + single_count
-            host_property.number_rooms_allocated = (shared_count // 2) + single_count
-            
-            # Validation: Check if allocated rooms exceed available rooms
-            if host_property.number_rooms_allocated > host_property.rooms_allotted:
-                db.session.rollback()
-                return jsonify({
-                    'error': 'Cannot allocate room: exceeds available room capacity'
-                }), 400
-            
-            # Update number_current_guests using the specified formula
-            # Formula: (1 * shared_count) + (2 * single_count)
-            host_property.number_current_guests = (1 * shared_count) + (2 * single_count)
-            
-            # Commit the host property updates
-            db.session.commit()
-            
-        except Exception as e:
+        # Calculate host property statistics (no database commit)
+        result = calculate_host_property_statistics(data['host_property_id'])
+        if 'error' in result:
             db.session.rollback()
-            return jsonify({
-                'error': f'Failed to update host property statistics: {str(e)}'
-            }), 500
+            return jsonify({'error': result['error']}), result.get('status_code', 500)
+        
+        # Add the updated host property to the session to ensure it gets committed
+        db.session.add(result['host_property'])
+        
+        # Commit all changes together
+        db.session.commit()
         
         # Return success response with accommodation details
         return jsonify({
@@ -1864,6 +1840,159 @@ def allocate_accommodation_to_buyer(buyer_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': f'Failed to allocate accommodation: {str(e)}'}), 500
+
+@admin.route('/buyer/<int:buyer_id>/update-accommodation', methods=['PUT'])
+@admin_required
+@jwt_required()
+def update_buyer_accommodation(buyer_id):
+    """
+    Update accommodation for a buyer (admin only)
+    """
+    data = request.get_json()
+    
+    # Validate input data
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
+    
+    # Validate required fields
+    required_fields = ['host_property_id', 'room_type', 'check_in_datetime', 'check_out_datetime']
+    for field in required_fields:
+        if field not in data or data[field] is None:
+            return jsonify({'error': f'Missing required field: {field}'}), 400
+    
+    try:
+        # Find the buyer
+        buyer = User.query.get(buyer_id)
+        if not buyer:
+            return jsonify({'error': f'User with ID {buyer_id} not found'}), 404
+        
+        if not buyer.is_buyer():
+            return jsonify({'error': f'User with ID {buyer_id} is not a buyer (role: {buyer.role})'}), 404
+        
+        # Get existing accommodation details from the accommodations table for the current buyer
+        existing_accommodation = Accommodation.query.filter_by(buyer_id=buyer_id).first()
+        if not existing_accommodation:
+            return jsonify({'error': 'No existing accommodation found for this buyer'}), 404
+        
+        # Verify that the existing accommodation corresponds to a valid travel plan
+        travel_plan = TravelPlan.query.get(existing_accommodation.travel_plan_id)
+        if not travel_plan:
+            return jsonify({
+                'error': 'No valid travel plan found for this accommodation. Cannot update accommodation without a valid travel plan.'
+            }), 400
+
+        # Additional validation: ensure the travel plan belongs to the buyer
+        if travel_plan.user_id != buyer_id:
+            return jsonify({
+                'error': 'Travel plan does not belong to this buyer. Data integrity issue detected.'
+            }), 400
+        
+        # Get existing host property (for future use)
+        existing_host_property = HostProperty.query.get(existing_accommodation.host_property_id)
+        if not existing_host_property:
+            return jsonify({'error': 'Existing host property not found'}), 404
+        
+        # Verify new host property exists
+        new_host_property = HostProperty.query.get(data['host_property_id'])
+        if not new_host_property:
+            return jsonify({'error': f'Host property with ID {data["host_property_id"]} not found'}), 404
+        
+        # Validate room type
+        valid_room_types = ['single', 'shared']
+        if data['room_type'] not in valid_room_types:
+            return jsonify({'error': f'Invalid room type. Must be one of: {valid_room_types}'}), 400
+        
+        # Parse and validate datetime fields
+        try:
+            from datetime import datetime as dt
+            check_in_datetime = dt.fromisoformat(data['check_in_datetime'].replace('Z', '+00:00'))
+            check_out_datetime = dt.fromisoformat(data['check_out_datetime'].replace('Z', '+00:00'))
+            
+            # Validate check_out is after check_in
+            if check_out_datetime <= check_in_datetime:
+                return jsonify({'error': 'Check-out datetime must be after check-in datetime'}), 400
+                
+        except (ValueError, AttributeError) as e:
+            return jsonify({'error': f'Invalid datetime format. Use ISO format (e.g., 2025-06-25T15:00:00Z): {str(e)}'}), 400
+        
+        # Check if current allocated property and updated host property are the same, and only room type has changed
+        if (existing_accommodation.host_property_id == data['host_property_id'] and 
+            existing_accommodation.room_type != data['room_type']):
+            logging.info(f'Updating accommodation for buyer {buyer_id} with new room type only')
+            # Update room_type to whatever comes from UI
+            existing_accommodation.room_type = data['room_type']
+            
+            # Update other fields only if they are different from existing values
+            if existing_accommodation.check_in_datetime != check_in_datetime:
+                existing_accommodation.check_in_datetime = check_in_datetime
+            if existing_accommodation.check_out_datetime != check_out_datetime:
+                existing_accommodation.check_out_datetime = check_out_datetime
+            if existing_accommodation.booking_reference != data.get('booking_reference', ''):
+                existing_accommodation.booking_reference = data.get('booking_reference', '')
+            if existing_accommodation.special_notes != data.get('special_notes', ''):
+                existing_accommodation.special_notes = data.get('special_notes', '')
+            
+            # Keep host_property_id unchanged (it's the same)
+            
+        else:
+            # host_property_id has changed - update accommodation and recalculate statistics for both properties
+            logging.info(f'Updating accommodation for buyer {buyer_id} with new host property')
+            
+            # Update accommodations table with new data from UI
+            existing_accommodation.host_property_id = data['host_property_id']
+            existing_accommodation.room_type = data['room_type']
+            existing_accommodation.check_in_datetime = check_in_datetime
+            existing_accommodation.check_out_datetime = check_out_datetime
+            existing_accommodation.booking_reference = data.get('booking_reference', '')
+            existing_accommodation.special_notes = data.get('special_notes', '')
+            
+            # Add accommodations to session
+            db.session.add(existing_accommodation)
+            
+            # Calculate host property statistics for existing property id (old property)
+            old_property_result = calculate_host_property_statistics(existing_host_property.property_id)
+            if 'error' in old_property_result:
+                db.session.rollback()
+                return jsonify({'error': old_property_result['error']}), old_property_result.get('status_code', 500)
+            
+            # Add the updated old host property to session
+            db.session.add(old_property_result['host_property'])
+            
+            # Calculate host property statistics for new host property
+            new_property_result = calculate_host_property_statistics(data['host_property_id'])
+            if 'error' in new_property_result:
+                db.session.rollback()
+                return jsonify({'error': new_property_result['error']}), new_property_result.get('status_code', 500)
+            
+            # Add the updated new host property to session
+            db.session.add(new_property_result['host_property'])
+        
+        # Calculate updated_at as NOW()
+        existing_accommodation.updated_at = datetime.utcnow()
+        
+        # Calculate host property statistics for current property id and add to session commit
+        result = calculate_host_property_statistics(data['host_property_id'])
+        if 'error' in result:
+            db.session.rollback()
+            return jsonify({'error': result['error']}), result.get('status_code', 500)
+        
+        # Add the updated host property to the session to ensure it gets committed
+        db.session.add(result['host_property'])
+        
+        # Commit everything
+        db.session.commit()
+        
+        return jsonify({
+            'message': f'Accommodation updated successfully for {buyer.buyer_profile.name if buyer.buyer_profile else buyer.username}',
+            'accommodation': existing_accommodation.to_dict()
+        }), 200
+        
+    except ValueError as e:
+        db.session.rollback()
+        return jsonify({'error': f'Invalid data format: {str(e)}'}), 400
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Failed to update accommodation: {str(e)}'}), 500
 
 @admin.route('/buyers/<int:buyer_id>/accommodations', methods=['GET'])
 @admin_required
