@@ -6,7 +6,7 @@ import secrets
 import logging
 from datetime import datetime, timedelta
 from ..utils.auth import admin_required
-from ..models import db, User, UserRole, InvitedBuyer, PendingBuyer, DomainRestriction, Meeting, Listing, SellerProfile, BuyerProfile, BuyerCategory, HostProperty, TravelPlan, Accommodation, TransportType, SellerFinancialInfo
+from ..models import db, User, UserRole, InvitedBuyer, PendingBuyer, DomainRestriction, Meeting, MeetingStatus, Listing, SellerProfile, BuyerProfile, BuyerCategory, HostProperty, TravelPlan, Accommodation, TransportType, SellerFinancialInfo
 from sqlalchemy import func
 from ..utils.email_service import send_invitation_email, send_approval_email, send_rejection_email
 from ..utils.accommodation_utils import calculate_host_property_statistics
@@ -204,6 +204,59 @@ def get_users():
                 'has_next': False,
                 'has_prev': False
             }
+        }), 500
+
+@admin.route('/meetings-count', methods=['GET'])
+@admin_required
+def get_meetings_count():
+    """
+    Endpoint to get count of all meetings and breakdown by status (admin only)
+    """
+    try:
+        # Single database query to get all meetings
+        all_meetings = Meeting.query.all()
+        
+        # Calculate total count
+        total_meetings = len(all_meetings)
+        
+        # Get current month and year
+        current_month = datetime.now().month
+        current_year = datetime.now().year
+        
+        # Initialize status counts with lowercase keys (matching frontend expectations)
+        status_counts = {
+            'pending': 0,
+            'accepted': 0,
+            'rejected': 0,
+            'expired': 0,
+            'cancelled': 0,
+            'completed': 0
+        }
+        meetings_created_this_month = 0
+        
+        # Count each status and monthly meetings in memory
+        for meeting in all_meetings:
+            # Get the enum value directly (which is already lowercase)
+            if meeting.status:
+                meeting_status_value = meeting.status.value
+                if meeting_status_value in status_counts:
+                    status_counts[meeting_status_value] += 1
+            
+            # Count meetings created in current month
+            if (meeting.created_at and 
+                meeting.created_at.month == current_month and 
+                meeting.created_at.year == current_year):
+                meetings_created_this_month += 1
+        
+        return jsonify({
+            'total_meetings': total_meetings,
+            'meetings_created_this_month': meetings_created_this_month,
+            'status_counts': status_counts
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': f'Failed to retrieve meetings count: {str(e)}'
         }), 500
 
 @admin.route('/users/<int:user_id>', methods=['GET'])
@@ -2917,3 +2970,101 @@ def get_available_stall_types():
         
     except Exception as e:
         return jsonify({'error': f'Failed to fetch stall types: {str(e)}'}), 500
+
+@admin.route('/deactivate/<int:buyer_id>', methods=['POST'])
+@admin_required
+def deactivate_buyer(buyer_id):
+    """
+    Deactivate a buyer and clean up their travel plan data (admin only)
+    """
+    try:
+        # Step A: Check that the buyer id passed is a valid buyer id
+        # (id exists in users table with role buyer and there is an entry in buyer_profiles where user_id = buyer_id)
+        user = User.query.get(buyer_id)
+        if not user or not user.is_buyer():
+            return jsonify({'error': 'User not found or not a buyer'}), 404
+        
+        buyer_profile = BuyerProfile.query.filter_by(user_id=buyer_id).first()
+        if not buyer_profile:
+            return jsonify({'error': 'Buyer profile not found'}), 404
+        
+        # Step B: If valid buyer, process travel plan data
+        travel_plan_processed = False
+        accommodation_removed = False
+        transportation_removed = False
+        host_property_id = None
+        
+        # 1. Check if the buyer has a valid travel plan
+        travel_plan = TravelPlan.query.filter_by(user_id=buyer_id).first()
+        
+        if travel_plan:
+            travel_plan_processed = True
+            travel_plan_id = travel_plan.id
+            
+            # 3. Read data from accommodations table for this buyer id and travel plan, store the host_property_id
+            accommodation = Accommodation.query.filter_by(
+                buyer_id=buyer_id, 
+                travel_plan_id=travel_plan_id
+            ).first()
+            
+            if accommodation:
+                host_property_id = accommodation.host_property_id
+            
+            # 4. Delete any records from ground transportation record for this buyer_id and travel plan
+            from ..models import GroundTransportation
+            ground_transportation_count = GroundTransportation.query.filter_by(travel_plan_id=travel_plan_id).count()
+            if ground_transportation_count > 0:
+                GroundTransportation.query.filter_by(travel_plan_id=travel_plan_id).delete()
+                transportation_removed = True
+            
+            # 5. Delete any record from accommodations table for this buyer id and travel plan
+            accommodation_count = Accommodation.query.filter_by(
+                buyer_id=buyer_id, 
+                travel_plan_id=travel_plan_id
+            ).count()
+            if accommodation_count > 0:
+                Accommodation.query.filter_by(
+                    buyer_id=buyer_id, 
+                    travel_plan_id=travel_plan_id
+                ).delete()
+                accommodation_removed = True
+            
+            # 6. Calculate host_property_statistics for the previously stored host_property_id
+            if host_property_id:
+                result = calculate_host_property_statistics(host_property_id)
+                if 'error' in result:
+                    db.session.rollback()
+                    return jsonify({'error': result['error']}), result.get('status_code', 500)
+                
+                # Add the updated host property to the session
+                db.session.add(result['host_property'])
+        
+        # NEW STEP: Update meetings where this buyer is a participant to EXPIRED status
+        meetings_updated = 0
+        buyer_meetings = Meeting.query.filter(Meeting.buyer_id == buyer_id).all()
+        
+        for meeting in buyer_meetings:
+            meeting.status = MeetingStatus.EXPIRED
+            db.session.add(meeting)
+            meetings_updated += 1
+        
+        # Step C: Set buyer status to inactive in buyer_profiles
+        buyer_profile.status = 'inactive'
+        db.session.add(buyer_profile)
+        
+        # Step D: Commit all changes
+        db.session.commit()
+        
+        return jsonify({
+            'message': f'Buyer {buyer_profile.name} deactivated successfully',
+            'buyer_id': buyer_id,
+            'buyer_name': buyer_profile.name,
+            'travel_plan_processed': travel_plan_processed,
+            'accommodation_removed': accommodation_removed,
+            'transportation_removed': transportation_removed,
+            'host_property_updated': bool(host_property_id)
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Failed to deactivate buyer: {str(e)}'}), 500

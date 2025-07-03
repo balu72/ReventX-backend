@@ -312,3 +312,211 @@ def get_states():
     return jsonify({
         'states': state_list
     }), 200
+
+def _get_all_valid_buyer_user_ids():
+    """Helper function to get all valid buyer user IDs"""
+    buyer_user_ids = db.session.query(BuyerProfile.user_id).join(User).filter(
+        User.role == UserRole.BUYER.value
+    ).order_by(BuyerProfile.user_id.asc()).all()
+    
+    # Extract user_ids from tuples
+    return [uid[0] for uid in buyer_user_ids]
+
+@buyers.route('/by-user-ids', methods=['POST'])
+@jwt_required()
+def get_buyers_by_user_ids():
+    """Get buyers by array of user IDs"""
+    try:
+        # Get JSON data from request
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({
+                'error': 'JSON payload required'
+            }), 400
+        
+        user_ids = data.get('user_ids', [])
+        
+        # Validate input
+        if not isinstance(user_ids, list):
+            return jsonify({
+                'error': 'user_ids must be an array'
+            }), 400
+        
+        if len(user_ids) == 0:
+            return jsonify({
+                'error': 'user_ids array cannot be empty'
+            }), 400
+        
+        if len(user_ids) > 20:
+            return jsonify({
+                'error': 'Maximum 20 user IDs allowed'
+            }), 400
+        
+        # Filter to only positive integers
+        valid_input_ids = []
+        invalid_user_ids = []
+        
+        for user_id in user_ids:
+            if isinstance(user_id, int) and user_id > 0:
+                valid_input_ids.append(user_id)
+            else:
+                invalid_user_ids.append(user_id)
+        
+        if len(valid_input_ids) == 0:
+            return jsonify({
+                'error': 'No valid user IDs provided (must be positive integers)'
+            }), 400
+        
+        # Get all valid buyer user IDs from the database
+        all_valid_buyer_ids = _get_all_valid_buyer_user_ids()
+        
+        # Filter input IDs to only include those that are valid buyers
+        valid_buyer_ids = [uid for uid in valid_input_ids if uid in all_valid_buyer_ids]
+        not_found_user_ids = [uid for uid in valid_input_ids if uid not in all_valid_buyer_ids]
+        
+        # Add not found IDs to invalid list
+        invalid_user_ids.extend(not_found_user_ids)
+        
+        if len(valid_buyer_ids) == 0:
+            return jsonify({
+                'buyers': [],
+                'invalid_user_ids': invalid_user_ids,
+                'summary': {
+                    'requested': len(user_ids),
+                    'valid': 0,
+                    'invalid': len(invalid_user_ids)
+                }
+            }), 200
+        
+        # Query for buyer profiles with valid buyer IDs
+        buyer_profiles = BuyerProfile.query.join(User).filter(
+            User.id.in_(valid_buyer_ids)
+        ).order_by(BuyerProfile.organization.asc()).all()
+        
+        # Convert to dict format without meeting quota information
+        buyers_data = []
+        for b in buyer_profiles:
+            buyer_dict = {
+                'id': b.id,
+                'user_id': b.user_id,
+                'name': b.name,
+                'organization': b.organization,
+                'designation': b.designation,
+                'operator_type': b.operator_type,
+                'category_id': b.category_id,
+                'salutation': b.salutation,
+                'first_name': b.first_name,
+                'last_name': b.last_name,
+                'vip': b.vip,
+                'status': b.status,
+                'gst': b.gst,
+                'pincode': b.pincode,
+                'interests': b.interests or [],
+                'properties_of_interest': b.properties_of_interest or [],
+                'country': b.country,
+                'state': b.state,
+                'city': b.city,
+                'address': b.address,
+                'mobile': b.mobile,
+                'website': b.website,
+                'instagram': b.instagram,
+                'year_of_starting_business': b.year_of_starting_business,
+                'selling_wayanad': b.selling_wayanad,
+                'since_when': b.since_when,
+                'bio': b.bio,
+                'profile_image': b.profile_image,
+                'created_at': b.created_at.isoformat() if b.created_at else None,
+                'updated_at': b.updated_at.isoformat() if b.updated_at else None,
+                'user': {
+                    'id': b.user.id,
+                    'username': b.user.username,
+                    'email': b.user.email,
+                    'role': b.user.role,
+                    'created_at': b.user.created_at.isoformat() if b.user.created_at else None
+                }
+            }
+            
+            # Note: Meeting quota information is intentionally omitted for performance
+            
+            buyers_data.append(buyer_dict)
+        
+        return jsonify({
+            'buyers': buyers_data,
+            'invalid_user_ids': invalid_user_ids,
+            'summary': {
+                'requested': len(user_ids),
+                'valid': len(buyers_data),
+                'invalid': len(invalid_user_ids)
+            }
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': f'Internal server error: {str(e)}'
+        }), 500
+
+@buyers.route('/user-ids', methods=['GET'])
+@jwt_required()
+def get_all_buyer_user_ids():
+    """Get all valid buyer user IDs with optional filtering"""
+    try:
+        # Get query parameters for filtering
+        name = request.args.get('name', '')
+        operator_type = request.args.get('operator_type', '')
+        interest = request.args.get('interest', '')
+        property_type = request.args.get('property_type', '')
+        country = request.args.get('country', '')
+        state = request.args.get('state', '')
+        
+        # If no filters provided, return all buyer user IDs (backward compatibility)
+        if not any([name, operator_type, interest, property_type, country, state]):
+            user_ids = _get_all_valid_buyer_user_ids()
+            return jsonify({
+                'user_ids': user_ids
+            }), 200
+        
+        # Start with a query for all buyers - only include users with buyer role
+        query = db.session.query(BuyerProfile.user_id).join(User).filter(
+            User.role == UserRole.BUYER.value
+        )
+        
+        # Apply filters if provided
+        if name:
+            query = query.filter(
+                (BuyerProfile.name.ilike(f'%{name}%')) | 
+                (BuyerProfile.organization.ilike(f'%{name}%'))
+            )
+        
+        if operator_type:
+            query = query.filter(BuyerProfile.operator_type == operator_type)
+        
+        if interest:
+            # For JSONB array fields, use the @> operator to check if array contains element
+            query = query.filter(BuyerProfile.interests.op('@>')(f'["{interest}"]'))
+        
+        if property_type:
+            # For JSONB array fields, use the @> operator to check if array contains element
+            query = query.filter(BuyerProfile.properties_of_interest.op('@>')(f'["{property_type}"]'))
+        
+        if country:
+            query = query.filter(BuyerProfile.country == country)
+        
+        if state:
+            query = query.filter(BuyerProfile.state == state)
+        
+        # Execute the query and get user IDs
+        query = query.order_by(BuyerProfile.user_id.asc())
+        user_id_tuples = query.all()
+        
+        # Extract user_ids from tuples
+        user_ids = [uid[0] for uid in user_id_tuples]
+        
+        return jsonify({
+            'user_ids': user_ids
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': f'Internal server error: {str(e)}'
+        }), 500
