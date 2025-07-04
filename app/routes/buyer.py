@@ -1372,7 +1372,7 @@ def upload_profile_image():
             return jsonify({'Exception': f'Failed to upload file {upload_url}:::{str(e)}'}), 500
         
         # Update profile with image URL
-        image_url = file_public_url
+        image_url = file_public_url+"/download"
         buyer_profile.profile_image = image_url
         
         db.session.commit()
@@ -1666,3 +1666,61 @@ def get_sellers():
     return jsonify({
         'sellers': seller_list
     }), 200
+
+@buyer.route('/public/<buyer_slug>', methods=['GET'])
+def get_buyer_public_profile(buyer_slug):
+    """Get a buyer profile by its slug (public, no auth required)"""
+    try:
+        # Extract buyer_id from slug (format: BXXX where XXX are digits)
+        if not buyer_slug.startswith('B') or len(buyer_slug) < 2:
+            return jsonify({
+                'error': 'Invalid buyer slug format. Expected format: BXXX'
+            }), 400
+        
+        # Extract numeric part
+        try:
+            buyer_id = int(buyer_slug[1:])  # Remove 'B' and convert to int
+        except ValueError:
+            return jsonify({
+                'error': 'Invalid buyer slug format. Expected format: BXXX'
+            }), 400
+        
+        # Check if user exists and has buyer role
+        user = User.query.get(buyer_id)
+        if not user or user.role != UserRole.BUYER.value:
+            return jsonify({
+                'error': 'Buyer not found'
+            }), 404
+        
+        # Get buyer profile
+        buyer_profile = BuyerProfile.query.filter_by(user_id=buyer_id).first()
+        if not buyer_profile:
+            return jsonify({
+                'error': 'Buyer profile not found'
+            }), 404
+        
+        # Return only public-safe subset of data
+        buyer_data = {
+            'user_id': buyer_profile.user_id,
+            'name': buyer_profile.name,
+            'organization': buyer_profile.organization,
+            'designation': buyer_profile.designation,
+            'city': buyer_profile.city,
+            'state': buyer_profile.state,
+            'country': buyer_profile.country,
+            'address': buyer_profile.address,
+            'profile_image': buyer_profile.profile_image+'/download',
+            'status': buyer_profile.status,
+            'vip': buyer_profile.vip,
+            'category': buyer_profile.category.name if buyer_profile.category else None,
+            'website': buyer_profile.website
+        }
+        
+        return jsonify({
+            'buyer': buyer_data
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': f'Failed to fetch buyer profile: {str(e)}'
+        }), 500
