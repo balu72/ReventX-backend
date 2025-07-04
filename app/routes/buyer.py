@@ -13,6 +13,25 @@ import os
 import logging
 from ..utils.auth import buyer_required
 from ..models import db, User, TravelPlan, Transportation, Accommodation, GroundTransportation, Meeting, MeetingStatus, UserRole, TimeSlot, SystemSetting, BuyerProfile, BuyerCategory, PropertyType, Interest, StallType, Stall
+# Import helper functions from buyer_utils
+from ..utils.buyer_utils import (
+    get_outbound_departure_datetime,
+    get_outbound_arrival_datetime, 
+    get_return_departure_datetime,
+    get_return_arrival_datetime,
+    validate_user_id,
+    validate_buyer_exists,
+    validate_travel_plan_access,
+    get_nextcloud_connection,
+    create_buyer_directories,
+    get_buyer_profile_images,
+    convert_image_to_base64_data_url,
+    validate_image_file,
+    generate_buyer_image_filename,
+    upload_buyer_image_to_nextcloud,
+    create_buyer_image_response,
+    log_buyer_image_response
+)
 
 buyer = Blueprint('buyer', __name__, url_prefix='/api/buyer')
 
@@ -137,6 +156,36 @@ def get_profile():
     
     # Get the profile as a dictionary
     profile_dict = buyer_profile.to_dict()
+    
+    # Get buyer profile image using helper functions
+    try:
+        # Get Nextcloud connection
+        nc = get_nextcloud_connection()
+        if nc:
+            # Get buyer profile images
+            image_files = get_buyer_profile_images(user_id)
+            if image_files:
+                # Sort by timestamp (most recent first) and get the latest image
+                image_files.sort(key=lambda x: x[0], reverse=True)
+                latest_timestamp, latest_filename, latest_file_info = image_files[0]
+                
+                # Convert image to base64 data URL
+                image_data = convert_image_to_base64_data_url(user_id, latest_filename)
+                profile_dict['profile_image'] = image_data['image_data_url']
+            else:
+                # No image found, keep existing profile_image value or set to None
+                if not profile_dict.get('profile_image'):
+                    profile_dict['profile_image'] = None
+        else:
+            # Nextcloud not available, keep existing profile_image value
+            if not profile_dict.get('profile_image'):
+                profile_dict['profile_image'] = None
+    except Exception as e:
+        # Log error but don't fail the request
+        logging.error(f"Error retrieving buyer profile image: {str(e)}")
+        # Keep existing profile_image value or set to None
+        if not profile_dict.get('profile_image'):
+            profile_dict['profile_image'] = None
     
     # Calculate meeting quota information
     meeting_quota = calculate_buyer_meeting_quota(user_id, buyer_profile)
@@ -367,221 +416,6 @@ def get_travel_plans():
     return jsonify({
         'travel_plans': [plan.to_dict() for plan in travel_plans]
     }), 200
-
-# Helper functions for datetime handling
-def get_outbound_departure_datetime(data):
-    """
-    Helper function to get outbound departure datetime.
-    """
-    # Check if data is None or empty, or if 'outbound' key is missing
-    if data is None or not data or 'outbound' not in data:
-        return datetime.now()  # Default to current time
-        
-    if (not data['outbound'].get('departureDateTime') or 
-        data['outbound']['departureDateTime'] == '' or 
-        data['outbound']['departureDateTime'] == 'T:00'):
-        # Default to current time minus 2 hours (assuming arrival is event time)
-        event_start_date = SystemSetting.query.filter_by(key='event_start_date').first()
-        if event_start_date and event_start_date.value:
-            try:
-                # Check for the specific error case
-                if event_start_date.value == 'T:00' or event_start_date.value.startswith('T:'):
-                    logging.warning(f"Invalid date format 'T:00' detected in event_start_date")
-                    return datetime.now()
-                
-                # Check if the value contains 'T' before splitting
-                if 'T' in event_start_date.value:
-                    # Extract just the date part (YYYY-MM-DD)
-                    start_date_str = event_start_date.value.split('T')[0]
-                    
-                    # Validate the date string format
-                    if len(start_date_str) == 10:  # YYYY-MM-DD is 10 characters
-                        # Parse with the correct format
-                        start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
-                        
-                        # Set time to 12:00 PM (noon) - assuming arrival is 2pm
-                        from datetime import timedelta
-                        outbound_date = start_date.replace(hour=12, minute=0, second=0)
-                        return outbound_date
-                
-                # If we reach here, the date format was invalid
-                logging.warning(f"Invalid date format in event_start_date: {event_start_date.value}")
-                return datetime.now()
-                
-            except (ValueError, TypeError, IndexError) as e:
-                # Log the error for debugging
-                logging.error(f"Error parsing event_start_date: {str(e)}")
-                # Default to current time if parsing fails
-                return datetime.now()
-        # Default to current time if setting not found
-        return datetime.now()
-    else:
-        try:
-            # Use the provided datetime
-            return datetime.fromisoformat(data['outbound']['departureDateTime'])
-        except (ValueError, TypeError) as e:
-            logging.error(f"Error parsing outbound departure datetime: {str(e)}")
-            return datetime.now()
-
-def get_outbound_arrival_datetime(data):
-    """
-    Helper function to get outbound arrival datetime.
-    """
-    # Check if data is None or empty, or if 'outbound' key is missing
-    if data is None or not data or 'outbound' not in data:
-        return datetime.now()  # Default to current time
-        
-    if (not data['outbound'].get('arrivalDateTime') or 
-        data['outbound']['arrivalDateTime'] == '' or 
-        data['outbound']['arrivalDateTime'] == 'T:00'):
-        # Get event start date from system settings
-        event_start_date = SystemSetting.query.filter_by(key='event_start_date').first()
-        if event_start_date and event_start_date.value:
-            try:
-                # Check for the specific error case
-                if event_start_date.value == 'T:00' or event_start_date.value.startswith('T:'):
-                    logging.warning(f"Invalid date format 'T:00' detected in event_start_date")
-                    return datetime.now()
-                
-                # Check if the value contains 'T' before splitting
-                if 'T' in event_start_date.value:
-                    # Extract just the date part (YYYY-MM-DD)
-                    start_date_str = event_start_date.value.split('T')[0]
-                    
-                    # Validate the date string format
-                    if len(start_date_str) == 10:  # YYYY-MM-DD is 10 characters
-                        # Parse with the correct format
-                        start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
-                        
-                        # Set time to 02:00 PM (14:00)
-                        outbound_date = start_date.replace(hour=14, minute=0, second=0)
-                        return outbound_date
-                
-                # If we reach here, the date format was invalid
-                logging.warning(f"Invalid date format in event_start_date: {event_start_date.value}")
-                return datetime.now()
-                
-            except (ValueError, TypeError, IndexError) as e:
-                # Log the error for debugging
-                logging.error(f"Error parsing event_start_date: {str(e)}")
-                # Default to current time if parsing fails
-                return datetime.now()
-        # Default to current time if setting not found
-        return datetime.now()
-    else:
-        try:
-            # Use the provided datetime
-            return datetime.fromisoformat(data['outbound']['arrivalDateTime'])
-        except (ValueError, TypeError) as e:
-            logging.error(f"Error parsing outbound arrival datetime: {str(e)}")
-            return datetime.now()
-
-def get_return_departure_datetime(data):
-    """
-    Helper function to get return departure datetime.
-    """
-    # Check if data is None or empty, or if 'return' key is missing
-    if data is None or not data or 'return' not in data:
-        return datetime.now()  # Default to current time
-        
-    if (not data['return'].get('departureDateTime') or 
-        data['return']['departureDateTime'] == '' or 
-        data['return']['departureDateTime'] == 'T:00'):
-        # Get event end date from system settings
-        event_end_date = SystemSetting.query.filter_by(key='event_end_date').first()
-        if event_end_date and event_end_date.value:
-            try:
-                # Check for the specific error case
-                if event_end_date.value == 'T:00' or event_end_date.value.startswith('T:'):
-                    logging.warning(f"Invalid date format 'T:00' detected in event_end_date")
-                    return datetime.now()
-                
-                # Check if the value contains 'T' before splitting
-                if 'T' in event_end_date.value:
-                    # Extract just the date part (YYYY-MM-DD)
-                    end_date_str = event_end_date.value.split('T')[0]
-                    
-                    # Validate the date string format
-                    if len(end_date_str) == 10:  # YYYY-MM-DD is 10 characters
-                        # Parse with the correct format
-                        end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
-                        
-                        # Set time to 6:00 PM on the end date
-                        return_date = end_date.replace(hour=18, minute=0, second=0)
-                        return return_date
-                
-                # If we reach here, the date format was invalid
-                logging.warning(f"Invalid date format in event_end_date: {event_end_date.value}")
-                return datetime.now()
-                
-            except (ValueError, TypeError, IndexError) as e:
-                # Log the error for debugging
-                logging.error(f"Error parsing event_end_date: {str(e)}")
-                # Default to current time if parsing fails
-                return datetime.now()
-        # Default to current time if setting not found
-        return datetime.now()
-    else:
-        try:
-            # Use the provided datetime
-            return datetime.fromisoformat(data['return']['departureDateTime'])
-        except (ValueError, TypeError) as e:
-            logging.error(f"Error parsing return departure datetime: {str(e)}")
-            return datetime.now()
-
-def get_return_arrival_datetime(data):
-    """
-    Helper function to get return arrival datetime.
-    """
-    # Check if data is None or empty, or if 'return' key is missing
-    if data is None or not data or 'return' not in data:
-        return datetime.now()  # Default to current time
-        
-    if (not data['return'].get('arrivalDateTime') or 
-        data['return']['arrivalDateTime'] == '' or 
-        data['return']['arrivalDateTime'] == 'T:00'):
-        # Get event end date from system settings
-        event_end_date = SystemSetting.query.filter_by(key='event_end_date').first()
-        if event_end_date and event_end_date.value:
-            try:
-                # Check for the specific error case
-                if event_end_date.value == 'T:00' or event_end_date.value.startswith('T:'):
-                    logging.warning(f"Invalid date format 'T:00' detected in event_end_date")
-                    return datetime.now()
-                
-                # Check if the value contains 'T' before splitting
-                if 'T' in event_end_date.value:
-                    # Extract just the date part (YYYY-MM-DD)
-                    end_date_str = event_end_date.value.split('T')[0]
-                    
-                    # Validate the date string format
-                    if len(end_date_str) == 10:  # YYYY-MM-DD is 10 characters
-                        # Parse with the correct format
-                        end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
-                        
-                        # Add 1 day and set time to 12:00 PM
-                        from datetime import timedelta
-                        return_date = (end_date + timedelta(days=1)).replace(hour=12, minute=0, second=0)
-                        return return_date
-                
-                # If we reach here, the date format was invalid
-                logging.warning(f"Invalid date format in event_end_date: {event_end_date.value}")
-                return datetime.now()
-                
-            except (ValueError, TypeError, IndexError) as e:
-                # Log the error for debugging
-                logging.error(f"Error parsing event_end_date: {str(e)}")
-                # Default to current time if parsing fails
-                return datetime.now()
-        # Default to current time if setting not found
-        return datetime.now()
-    else:
-        try:
-            # Use the provided datetime
-            return datetime.fromisoformat(data['return']['arrivalDateTime'])
-        except (ValueError, TypeError) as e:
-            logging.error(f"Error parsing return arrival datetime: {str(e)}")
-            return datetime.now()
 
 @buyer.route('/travel-plans/<int:plan_id>/outbound', methods=['PUT'])
 @buyer_required
@@ -922,6 +756,7 @@ def update_accommodation(plan_id):
         'message': 'Accommodation updated successfully',
         'travel_plan': travel_plan.to_dict()
     }), 200
+
 @buyer.route('/travel-plans/<int:plan_id>/pickup', methods=['PUT'])
 @buyer_required
 def update_pickup(plan_id):
@@ -1203,12 +1038,11 @@ def upload_profile_image():
     """
     user_id = get_jwt_identity()
     
-    # Convert to int if it's a string
-    if isinstance(user_id, str):
-        try:
-            user_id = int(user_id)
-        except ValueError:
-            return jsonify({'error': 'Invalid user ID'}), 400
+    # Convert to int if it's a string using helper function
+    try:
+        user_id = validate_user_id(user_id)
+    except ValueError:
+        return jsonify({'error': 'Invalid user ID'}), 400
     
     # Check if file was uploaded
     if 'file' not in request.files:
@@ -1216,22 +1050,10 @@ def upload_profile_image():
     
     file = request.files['file']
     
-    # Validate file
-    if file.filename == '':
-        return jsonify({'error': 'No file selected'}), 400
-    
-    # Check file type
-    allowed_extensions = {'jpg', 'jpeg', 'png'}
-    if not '.' in file.filename or file.filename.rsplit('.', 1)[1].lower() not in allowed_extensions:
-        return jsonify({'error': 'Invalid file type. Only JPG, JPEG, and PNG files are allowed'}), 400
-    
-    # Check file size (1MB limit)
-    file.seek(0, os.SEEK_END)
-    file_size = file.tell()
-    file.seek(0)  # Reset file pointer
-    
-    if file_size > 1 * 1024 * 1024:  # 1MB
-        return jsonify({'error': 'File size exceeds 1MB limit'}), 400
+    # Validate file using helper function
+    validation_result = validate_image_file(file)
+    if not validation_result['valid']:
+        return jsonify({'error': validation_result['error']}), 400
     
     try:
         # Get buyer profile
@@ -1239,141 +1061,29 @@ def upload_profile_image():
         if not buyer_profile:
             return jsonify({'error': 'Buyer profile not found'}), 404
         
-        # Get external storage credentials from environment
-        storage_url = os.getenv('EXTERNAL_STORAGE_URL')+"index.php"
-        storage_user = os.getenv('EXTERNAL_STORAGE_USER')
-        storage_password = os.getenv('EXTERNAL_STORAGE_PASSWORD')
-        ocs_url = os.getenv("EXTERNAL_STORAGE_URL")+'ocs/v2.php/apps/files_sharing/api/v1/shares'
-        ocs_headers = {'OCS-APIRequest': 'true',"Accept": "application/json"}
-        ocs_auth = (storage_user, storage_password)  # Use app password or user/pass
-        
-        if not all([storage_url, storage_user, storage_password]):
+        # Get Nextcloud connection using helper function
+        nc = get_nextcloud_connection()
+        if not nc:
             return jsonify({'error': 'External storage configuration missing'}), 500
         
-        nc = Nextcloud(nextcloud_url=storage_url, nc_auth_user=storage_user, nc_auth_pass=storage_password)
-
-        # Save file to uploads directory
-        # upload_folder = os.path.join(current_app.config['UPLOAD_FOLDER'], 'profile_images')
-        buyer_base_dir_available = False
-        buyer_image_profile_dir_available = False
-        buyer_dir = f"buyer_{user_id}/"
-        remote_dir_path = f"/Photos/{buyer_dir}"
-        remote_base_profile_images_path = f"/Photos/{buyer_dir}/profile"
-        # Make base dir for buyer
-        try:
-            nc.files.listdir(remote_dir_path)
-            logging.debug(f"Found remote path:: {remote_dir_path}")
-            buyer_base_dir_available = True
-        except NextcloudException as e:
-            if e.status_code != 404:
-                raise e
-            else:
-                try:
-                    logging.info(f"Could not locate remote directory::: {remote_dir_path}::: Proceeding to create")
-                    nc.files.mkdir(remote_dir_path)
-                    logging.debug(f"Created remote directory {remote_dir_path} successfully")
-                    logging.debug("Now setting sharing permissions...")
-                    dir_sharing_data = {
-                        'path': remote_dir_path,         # Folder you created
-                        'shareType': 3,                  # Public link
-                        'permissions': 1                 # Read-only
-                    }
-                    response = requests.post(ocs_url, headers=ocs_headers, data=dir_sharing_data, auth=ocs_auth)
-
-                    if response.status_code == 200:
-                        logging.info(f"Response Text is:: {response}")
-                        share_info = response.json()
-                        link = share_info['ocs']['data']['url']
-                        logging.debug(f"Public Share URL: {link}")
-                        buyer_base_dir_available = True
-                    else:
-                        logging.debug("Failed to create share:", response.text)
-                except Exception as e:
-                    logging.debug(f"Exception while creating buyer base directory:{str(e)}")
-                    return jsonify({"Exception": f"Failed to create buyer base directory -- {remote_dir_path} - the error is ::::{str(e)}"}), 500
-
-        # If we have buyer base directory, check if we have buyer profile image directory
-        if buyer_base_dir_available: 
-            try:
-                nc.files.listdir(remote_base_profile_images_path)
-                logging.debug(f"Found remote path:: {remote_dir_path}")
-                buyer_image_profile_dir_available = True
-            except NextcloudException as e:
-                if e.status_code != 404:
-                    raise e
-                else:
-                    try:
-                        logging.info(f"Could not locate buyer profile image directory::: {remote_base_profile_images_path}::: Proceeding to create")
-                        nc.files.mkdir(remote_base_profile_images_path)
-                        logging.debug(f"Created remote directory {remote_dir_path} successfully")
-                        logging.debug("Now setting sharing permissions...")
-                        dir_sharing_data = {
-                            'path': remote_base_profile_images_path,         # Folder you created
-                            'shareType': 3,                  # Public link
-                            'permissions': 1                 # Read-only
-                        }
-                        response = requests.post(ocs_url, headers=ocs_headers, data=dir_sharing_data, auth=ocs_auth)
-                        if response.status_code == 200:
-                            logging.info(f"Response Text is:: {response}")
-                            share_info = response.json()
-                            link = share_info['ocs']['data']['url']
-                            logging.debug(f"Public Share URL: {link}")
-                            buyer_image_profile_dir_available = True
-                        else:
-                            logging.debug("Failed to create buyer profile image directtory:", response.text)
-                    except Exception as e:
-                        logging.debug(f"Exception while creating buyer buyer profile images directory:{str(e)}")
-                        return jsonify({"Exception": f"Failed to create buyer bprofile imagesase directory -- {remote_base_profile_images_path} - the error is ::::{str(e)}"}), 500
-
-
-        # Generate unique filename
-        filename = secure_filename(f"buyer_{user_id}_{int(datetime.now().timestamp())}.{file.filename.rsplit('.', 1)[1].lower()}")
-
+        # Create buyer directories using helper function
+        buyer_base_dir_available, buyer_image_profile_dir_available = create_buyer_directories(nc, user_id)
+        
+        if not buyer_image_profile_dir_available:
+            return jsonify({'error': 'Failed to create buyer profile image directory'}), 500
+        
+        # Generate unique filename using helper function
+        filename = generate_buyer_image_filename(user_id, file.filename)
+        
         # Prepare file data for upload
         file_data = file.read()
         file.seek(0)  # Reset for potential retry
-            
-        # Create basic auth header
-        auth_string = f"{storage_user}:{storage_password}"
-        auth_bytes = auth_string.encode('ascii')
-        auth_b64 = base64.b64encode(auth_bytes).decode('ascii')
-
-        # File upload URL
-        upload_url = f"{remote_base_profile_images_path}/{filename}"
         
-        # Public URL for storage and reading
-        file_public_url=""
-        
-        # Upload file
-        try:        
-            buf = BytesIO(file_data)  
-            buf.seek(0)
-            logging.info(f"Uploading file :::: {upload_url}")
-            uploaded_file = nc.files.upload_stream(upload_url, buf)
-            logging.info(f"The uploaded file data is::: {(uploaded_file.name)}")
-            # Now give it a publicly available link 
-            seller_file_sharing_data = {
-                'path': upload_url,              # Uploaded file
-                'shareType': 3,                  # Public link
-                'permissions': 1                 # Read-only
-            }
-            response = requests.post(ocs_url, headers=ocs_headers, data=seller_file_sharing_data, auth=ocs_auth)
-            if response.status_code == 200:
-                result = response.json()
-                if result["ocs"]["meta"]["status"] == "ok":
-                    file_public_url = result["ocs"]["data"]["url"]
-                    logging.debug(f"Public share URL: {file_public_url}")
-                else:
-                    logging.error(f"Share API error: {result['ocs']['meta']['message']}")
-            else:
-                print("HTTP error:", response.status_code, response.text)
-        except Exception as e:
-            logging.debug(f"Exception while uploading file:{e}")
-            return jsonify({'Exception': f'Failed to upload file {upload_url}:::{str(e)}'}), 500
+        # Upload file using helper function
+        upload_path = upload_buyer_image_to_nextcloud(nc, user_id, file_data, filename)
         
         # Update profile with image URL
-        image_url = file_public_url+"/download"
-        buyer_profile.profile_image = image_url
+        buyer_profile.profile_image = upload_path  # Store as /Photos/...
         
         db.session.commit()
         
@@ -1666,6 +1376,55 @@ def get_sellers():
     return jsonify({
         'sellers': seller_list
     }), 200
+
+@buyer.route('/image/<int:buyer_id>', methods=['GET'])
+def get_buyer_image(buyer_id):
+    """
+    Endpoint to retrieve buyer image URL given a buyer user ID
+    No authentication required - public access
+    """
+    # Initialize default response structure using helper function
+    response_data = create_buyer_image_response(buyer_id)
+    
+    try:
+        # Check if buyer exists and has buyer role using helper function
+        if not validate_buyer_exists(buyer_id):
+            response_data['error'] = 'Buyer not found'
+            log_buyer_image_response(response_data, 'buyer not found')
+            return jsonify(response_data), 404
+        
+        # Get Nextcloud connection using helper function
+        nc = get_nextcloud_connection()
+        if not nc:
+            response_data['error'] = 'External storage configuration missing'
+            log_buyer_image_response(response_data, 'config missing')
+            return jsonify(response_data), 200
+        
+        # Get buyer profile images using helper function
+        image_files = get_buyer_profile_images(buyer_id)
+        if not image_files:
+            log_buyer_image_response(response_data, 'no images found')
+            return jsonify(response_data), 200
+        
+        # Sort by timestamp (most recent first) and get the latest image
+        image_files.sort(key=lambda x: x[0], reverse=True)
+        latest_timestamp, latest_filename, latest_file_info = image_files[0]
+        
+        # Convert image to base64 data URL using helper function
+        image_data = convert_image_to_base64_data_url(buyer_id, latest_filename)
+        response_data.update({
+            'has_image': True,
+            **image_data
+        })
+        
+        log_buyer_image_response(response_data, 'image found')
+        return jsonify(response_data), 200
+        
+    except Exception as e:
+        response_data['error'] = f'Failed to retrieve buyer image: {str(e)}'
+        logging.error(f"Error retrieving buyer image: {str(e)}")
+        log_buyer_image_response(response_data, 'general error')
+        return jsonify(response_data), 200
 
 @buyer.route('/public/<buyer_slug>', methods=['GET'])
 def get_buyer_public_profile(buyer_slug):

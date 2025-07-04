@@ -3,6 +3,13 @@ from flask_jwt_extended import jwt_required
 from ..utils.auth import seller_required, admin_required
 from ..models import db, User, UserRole, BuyerProfile, Interest, PropertyType
 from ..utils.meeting_utils import calculate_buyer_meeting_quota
+# Import helper functions from buyer_utils
+from ..utils.buyer_utils import (
+    get_nextcloud_connection,
+    get_buyer_profile_images,
+    convert_image_to_base64_data_url
+)
+import logging
 
 buyers = Blueprint('buyers', __name__, url_prefix='/api/buyers')
 
@@ -97,6 +104,29 @@ def get_buyers():
             }
         }
         
+        # Get buyer profile image using helper functions
+        try:
+            # Get buyer profile images
+            image_files = get_buyer_profile_images(b.user_id)
+            if image_files:
+                # Sort by timestamp (most recent first) and get the latest image
+                image_files.sort(key=lambda x: x[0], reverse=True)
+                latest_timestamp, latest_filename, latest_file_info = image_files[0]
+                
+                # Convert image to base64 data URL
+                image_data = convert_image_to_base64_data_url(b.user_id, latest_filename)
+                buyer_dict['profile_image'] = image_data['image_data_url']
+            else:
+                # No image found, keep existing profile_image value or set to None
+                if not buyer_dict.get('profile_image'):
+                    buyer_dict['profile_image'] = None
+        except Exception as e:
+            # Log error but don't fail the request
+            logging.error(f"Error retrieving buyer profile image for user {b.user_id}: {str(e)}")
+            # Keep existing profile_image value or set to None
+            if not buyer_dict.get('profile_image'):
+                buyer_dict['profile_image'] = None
+
         # Calculate meeting quota information for each buyer
         meeting_quota = calculate_buyer_meeting_quota(b.user_id, b)
 
@@ -169,6 +199,29 @@ def get_buyer(buyer_id):
             'created_at': user.created_at.isoformat() if user.created_at else None
         }
     }
+    
+    # Get buyer profile image using helper functions
+    try:
+        # Get buyer profile images
+        image_files = get_buyer_profile_images(buyer_id)
+        if image_files:
+            # Sort by timestamp (most recent first) and get the latest image
+            image_files.sort(key=lambda x: x[0], reverse=True)
+            latest_timestamp, latest_filename, latest_file_info = image_files[0]
+            
+            # Convert image to base64 data URL
+            image_data = convert_image_to_base64_data_url(buyer_id, latest_filename)
+            buyer_dict['profile_image'] = image_data['image_data_url']
+        else:
+            # No image found, keep existing profile_image value or set to None
+            if not buyer_dict.get('profile_image'):
+                buyer_dict['profile_image'] = None
+    except Exception as e:
+        # Log error but don't fail the request
+        logging.error(f"Error retrieving buyer profile image: {str(e)}")
+        # Keep existing profile_image value or set to None
+        if not buyer_dict.get('profile_image'):
+            buyer_dict['profile_image'] = None
     
     # Calculate meeting quota information
     meeting_quota = calculate_buyer_meeting_quota(buyer_id, buyer_profile)
