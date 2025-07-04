@@ -788,6 +788,15 @@ def delete_attendee(attendee_id):
     if not attendee:
         return jsonify({'error': 'Attendee not found or access denied'}), 404
     
+    # Check if the attendee being deleted is marked as primary contact
+    if attendee.is_primary_contact:
+        return jsonify({'error': 'Cannot delete primary contact. Please assign another attendee as primary contact first.'}), 400
+    
+    # Check if this is the last attendee (count = 1)
+    total_attendees = SellerAttendee.query.filter_by(seller_profile_id=seller_profile.id).count()
+    if total_attendees <= 1:
+        return jsonify({'error': 'Cannot delete the last attendee. At least one attendee must remain.'}), 400
+    
     try:
         db.session.delete(attendee)
         db.session.commit()
