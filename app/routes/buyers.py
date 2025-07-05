@@ -413,7 +413,7 @@ def get_buyers_by_user_ids():
         for user_id in user_ids:
             if isinstance(user_id, int) and user_id > 0:
                 valid_input_ids.append(user_id)
-            else:
+            elif user_id != -1:  # Only append if not -1 placeholder
                 invalid_user_ids.append(user_id)
         
         if len(valid_input_ids) == 0:
@@ -428,7 +428,7 @@ def get_buyers_by_user_ids():
         valid_buyer_ids = [uid for uid in valid_input_ids if uid in all_valid_buyer_ids]
         not_found_user_ids = [uid for uid in valid_input_ids if uid not in all_valid_buyer_ids]
         
-        # Add not found IDs to invalid list
+        # Only add not found IDs to invalid list (don't include -1 placeholders)
         invalid_user_ids.extend(not_found_user_ids)
         
         if len(valid_buyer_ids) == 0:
@@ -443,56 +443,220 @@ def get_buyers_by_user_ids():
             }), 200
         
         # Query for buyer profiles with valid buyer IDs
-        buyer_profiles = BuyerProfile.query.join(User).filter(
-            User.id.in_(valid_buyer_ids)
-        ).order_by(BuyerProfile.organization.asc()).all()
+        try:
+            buyer_profiles = BuyerProfile.query.join(User).filter(
+                User.id.in_(valid_buyer_ids)
+            ).order_by(BuyerProfile.organization.asc()).all()
+            
+            # Convert to dict format without meeting quota information
+            buyers_data = []
+            for b in buyer_profiles:
+                try:
+                    buyer_dict = {
+                        'id': b.id,
+                        'user_id': b.user_id,
+                        'name': b.name,
+                        'organization': b.organization,
+                        'designation': b.designation,
+                        'operator_type': b.operator_type,
+                        'category_id': b.category_id,
+                        'salutation': b.salutation,
+                        'first_name': b.first_name,
+                        'last_name': b.last_name,
+                        'vip': b.vip,
+                        'status': b.status,
+                        'gst': b.gst,
+                        'pincode': b.pincode,
+                        'interests': b.interests or [],
+                        'properties_of_interest': b.properties_of_interest or [],
+                        'country': b.country,
+                        'state': b.state,
+                        'city': b.city,
+                        'address': b.address,
+                        'mobile': b.mobile,
+                        'website': b.website,
+                        'instagram': b.instagram,
+                        'year_of_starting_business': b.year_of_starting_business,
+                        'selling_wayanad': b.selling_wayanad,
+                        'since_when': b.since_when,
+                        'bio': b.bio,
+                        'profile_image': b.profile_image,
+                        'created_at': b.created_at.isoformat() if b.created_at else None,
+                        'updated_at': b.updated_at.isoformat() if b.updated_at else None,
+                        'user': {
+                            'id': b.user.id,
+                            'username': b.user.username,
+                            'email': b.user.email,
+                            'role': b.user.role,
+                            'created_at': b.user.created_at.isoformat() if b.user.created_at else None
+                        }
+                    }
+                    
+                    # Note: Meeting quota information is intentionally omitted for performance
+                    
+                    buyers_data.append(buyer_dict)
+                except Exception as e:
+                    # Add failed buyer ID to invalid list
+                    invalid_user_ids.append(b.user_id)
+                    logging.error(f"Error processing buyer profile for user {b.user_id}: {str(e)}")
+                    
+        except Exception as e:
+            # Handle database query errors
+            logging.error(f"Error querying buyer profiles: {str(e)}")
+            # Continue with empty buyers_data
+            buyers_data = []
         
-        # Convert to dict format without meeting quota information
-        buyers_data = []
-        for b in buyer_profiles:
-            buyer_dict = {
-                'id': b.id,
-                'user_id': b.user_id,
-                'name': b.name,
-                'organization': b.organization,
-                'designation': b.designation,
-                'operator_type': b.operator_type,
-                'category_id': b.category_id,
-                'salutation': b.salutation,
-                'first_name': b.first_name,
-                'last_name': b.last_name,
-                'vip': b.vip,
-                'status': b.status,
-                'gst': b.gst,
-                'pincode': b.pincode,
-                'interests': b.interests or [],
-                'properties_of_interest': b.properties_of_interest or [],
-                'country': b.country,
-                'state': b.state,
-                'city': b.city,
-                'address': b.address,
-                'mobile': b.mobile,
-                'website': b.website,
-                'instagram': b.instagram,
-                'year_of_starting_business': b.year_of_starting_business,
-                'selling_wayanad': b.selling_wayanad,
-                'since_when': b.since_when,
-                'bio': b.bio,
-                'profile_image': b.profile_image,
-                'created_at': b.created_at.isoformat() if b.created_at else None,
-                'updated_at': b.updated_at.isoformat() if b.updated_at else None,
-                'user': {
-                    'id': b.user.id,
-                    'username': b.user.username,
-                    'email': b.user.email,
-                    'role': b.user.role,
-                    'created_at': b.user.created_at.isoformat() if b.user.created_at else None
-                }
+        return jsonify({
+            'buyers': buyers_data,
+            'invalid_user_ids': invalid_user_ids,
+            'summary': {
+                'requested': len(user_ids),
+                'valid': len(buyers_data),
+                'invalid': len(invalid_user_ids)
             }
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': f'Internal server error: {str(e)}'
+        }), 500
+
+@buyers.route('/by-user-ids-with-quota', methods=['POST'])
+@jwt_required()
+def get_buyers_by_user_ids_with_quota_info():
+    """Get buyers by array of user IDs with meeting quota information"""
+    try:
+        # Get JSON data from request
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({
+                'error': 'JSON payload required'
+            }), 400
+        
+        user_ids = data.get('user_ids', [])
+        
+        # Validate input
+        if not isinstance(user_ids, list):
+            return jsonify({
+                'error': 'user_ids must be an array'
+            }), 400
+        
+        if len(user_ids) == 0:
+            return jsonify({
+                'error': 'user_ids array cannot be empty'
+            }), 400
+        
+        if len(user_ids) > 20:
+            return jsonify({
+                'error': 'Maximum 20 user IDs allowed'
+            }), 400
+        
+        # Filter to only positive integers
+        valid_input_ids = []
+        invalid_user_ids = []
+        
+        for user_id in user_ids:
+            if isinstance(user_id, int) and user_id > 0:
+                valid_input_ids.append(user_id)
+            elif user_id != -1:  # Only append if not -1 placeholder
+                invalid_user_ids.append(user_id)
+        
+        if len(valid_input_ids) == 0:
+            return jsonify({
+                'error': 'No valid user IDs provided (must be positive integers)'
+            }), 400
+        
+        # Get all valid buyer user IDs from the database
+        all_valid_buyer_ids = _get_all_valid_buyer_user_ids()
+        
+        # Filter input IDs to only include those that are valid buyers
+        valid_buyer_ids = [uid for uid in valid_input_ids if uid in all_valid_buyer_ids]
+        not_found_user_ids = [uid for uid in valid_input_ids if uid not in all_valid_buyer_ids]
+        
+        # Only add not found IDs to invalid list (don't include -1 placeholders)
+        invalid_user_ids.extend(not_found_user_ids)
+        
+        if len(valid_buyer_ids) == 0:
+            return jsonify({
+                'buyers': [],
+                'invalid_user_ids': invalid_user_ids,
+                'summary': {
+                    'requested': len(user_ids),
+                    'valid': 0,
+                    'invalid': len(invalid_user_ids)
+                }
+            }), 200
+        
+        # Query for buyer profiles with valid buyer IDs
+        try:
+            buyer_profiles = BuyerProfile.query.join(User).filter(
+                User.id.in_(valid_buyer_ids)
+            ).order_by(BuyerProfile.organization.asc()).all()
             
-            # Note: Meeting quota information is intentionally omitted for performance
-            
-            buyers_data.append(buyer_dict)
+            # Convert to dict format with meeting quota information
+            buyers_data = []
+            for b in buyer_profiles:
+                try:
+                    buyer_dict = {
+                        'id': b.id,
+                        'user_id': b.user_id,
+                        'name': b.name,
+                        'organization': b.organization,
+                        'designation': b.designation,
+                        'operator_type': b.operator_type,
+                        'category_id': b.category_id,
+                        'salutation': b.salutation,
+                        'first_name': b.first_name,
+                        'last_name': b.last_name,
+                        'vip': b.vip,
+                        'status': b.status,
+                        'gst': b.gst,
+                        'pincode': b.pincode,
+                        'interests': b.interests or [],
+                        'properties_of_interest': b.properties_of_interest or [],
+                        'country': b.country,
+                        'state': b.state,
+                        'city': b.city,
+                        'address': b.address,
+                        'mobile': b.mobile,
+                        'website': b.website,
+                        'instagram': b.instagram,
+                        'year_of_starting_business': b.year_of_starting_business,
+                        'selling_wayanad': b.selling_wayanad,
+                        'since_when': b.since_when,
+                        'bio': b.bio,
+                        'profile_image': b.profile_image,
+                        'created_at': b.created_at.isoformat() if b.created_at else None,
+                        'updated_at': b.updated_at.isoformat() if b.updated_at else None,
+                        'user': {
+                            'id': b.user.id,
+                            'username': b.user.username,
+                            'email': b.user.email,
+                            'role': b.user.role,
+                            'created_at': b.user.created_at.isoformat() if b.user.created_at else None
+                        }
+                    }
+                    
+                    # Calculate meeting quota information for each buyer
+                    try:
+                        meeting_quota = calculate_buyer_meeting_quota(b.user_id, b)
+                        buyer_dict.update(meeting_quota)
+                    except Exception as e:
+                        logging.error(f"Error calculating quota for buyer {b.user_id}: {str(e)}")
+                        # Continue without quota info
+                    
+                    buyers_data.append(buyer_dict)
+                except Exception as e:
+                    # Add failed buyer ID to invalid list
+                    invalid_user_ids.append(b.user_id)
+                    logging.error(f"Error processing buyer profile for user {b.user_id}: {str(e)}")
+                    
+        except Exception as e:
+            # Handle database query errors
+            logging.error(f"Error querying buyer profiles: {str(e)}")
+            # Continue with empty buyers_data
+            buyers_data = []
         
         return jsonify({
             'buyers': buyers_data,
