@@ -326,7 +326,7 @@ def batch_calculate_buyer_meeting_quota(buyer_profiles):
         active_count = 0
         
         for meeting in buyer_meetings:
-            status_upper = meeting.status.upper() if meeting.status else ''
+            status_upper = meeting.status.value.upper() if meeting.status else ''
             
             if status_upper == MeetingStatus.PENDING.value.upper():
                 pending_count += 1
