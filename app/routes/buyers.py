@@ -2,7 +2,7 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required
 from ..utils.auth import seller_required, admin_required
 from ..models import db, User, UserRole, BuyerProfile, Interest, PropertyType
-from ..utils.meeting_utils import calculate_buyer_meeting_quota
+from ..utils.meeting_utils import calculate_buyer_meeting_quota, batch_calculate_buyer_meeting_quota
 # Import helper functions from buyer_utils
 from ..utils.buyer_utils import (
     get_nextcloud_connection,
@@ -228,6 +228,243 @@ def get_buyer(buyer_id):
     
     # Add meeting quota information to the buyer dictionary
     buyer_dict.update(meeting_quota)
+    
+    return jsonify({
+        'buyer': buyer_dict
+    }), 200
+
+@buyers.route('/<int:buyer_id>/no-image', methods=['GET'])
+@jwt_required()
+def get_buyer_without_profile_image(buyer_id):
+    """Get a specific buyer's details without profile image (includes quota info)"""
+    # Find the buyer profile
+    buyer_profile = BuyerProfile.query.filter_by(user_id=buyer_id).first()
+    
+    if not buyer_profile:
+        return jsonify({
+            'error': 'Buyer not found'
+        }), 404
+    
+    # Check if the associated user is actually a buyer
+    user = User.query.get(buyer_id)
+    if not user or user.role != 'buyer':
+        return jsonify({
+            'error': 'User is not a buyer'
+        }), 400
+    
+    # Convert to dict format without problematic relationships
+    buyer_dict = {
+        'id': buyer_profile.id,
+        'user_id': buyer_profile.user_id,
+        'name': buyer_profile.name,
+        'organization': buyer_profile.organization,
+        'designation': buyer_profile.designation,
+        'operator_type': buyer_profile.operator_type,
+        'category_id': buyer_profile.category_id,
+        'salutation': buyer_profile.salutation,
+        'first_name': buyer_profile.first_name,
+        'last_name': buyer_profile.last_name,
+        'vip': buyer_profile.vip,
+        'status': buyer_profile.status,
+        'gst': buyer_profile.gst,
+        'pincode': buyer_profile.pincode,
+        'interests': buyer_profile.interests or [],
+        'properties_of_interest': buyer_profile.properties_of_interest or [],
+        'country': buyer_profile.country,
+        'state': buyer_profile.state,
+        'city': buyer_profile.city,
+        'address': buyer_profile.address,
+        'mobile': buyer_profile.mobile,
+        'website': buyer_profile.website,
+        'instagram': buyer_profile.instagram,
+        'year_of_starting_business': buyer_profile.year_of_starting_business,
+        'selling_wayanad': buyer_profile.selling_wayanad,
+        'since_when': buyer_profile.since_when,
+        'bio': buyer_profile.bio,
+        'profile_image': buyer_profile.profile_image,  # Use existing profile_image value
+        'created_at': buyer_profile.created_at.isoformat() if buyer_profile.created_at else None,
+        'updated_at': buyer_profile.updated_at.isoformat() if buyer_profile.updated_at else None,
+        'user': {
+            'id': user.id,
+            'username': user.username,
+            'email': user.email,
+            'role': user.role,
+            'created_at': user.created_at.isoformat() if user.created_at else None
+        }
+    }
+    
+    # Skip profile image fetching from Nextcloud for performance
+    # Use existing profile_image value from database or set to None
+    if not buyer_dict.get('profile_image'):
+        buyer_dict['profile_image'] = None
+    
+    # Calculate meeting quota information
+    meeting_quota = calculate_buyer_meeting_quota(buyer_id, buyer_profile)
+    
+    # Add meeting quota information to the buyer dictionary
+    buyer_dict.update(meeting_quota)
+    
+    return jsonify({
+        'buyer': buyer_dict
+    }), 200
+
+@buyers.route('/<int:buyer_id>/no-quota', methods=['GET'])
+@jwt_required()
+def get_buyer_without_quota_info(buyer_id):
+    """Get a specific buyer's details without quota information (includes profile image)"""
+    # Find the buyer profile
+    buyer_profile = BuyerProfile.query.filter_by(user_id=buyer_id).first()
+    
+    if not buyer_profile:
+        return jsonify({
+            'error': 'Buyer not found'
+        }), 404
+    
+    # Check if the associated user is actually a buyer
+    user = User.query.get(buyer_id)
+    if not user or user.role != 'buyer':
+        return jsonify({
+            'error': 'User is not a buyer'
+        }), 400
+    
+    # Convert to dict format without problematic relationships
+    buyer_dict = {
+        'id': buyer_profile.id,
+        'user_id': buyer_profile.user_id,
+        'name': buyer_profile.name,
+        'organization': buyer_profile.organization,
+        'designation': buyer_profile.designation,
+        'operator_type': buyer_profile.operator_type,
+        'category_id': buyer_profile.category_id,
+        'salutation': buyer_profile.salutation,
+        'first_name': buyer_profile.first_name,
+        'last_name': buyer_profile.last_name,
+        'vip': buyer_profile.vip,
+        'status': buyer_profile.status,
+        'gst': buyer_profile.gst,
+        'pincode': buyer_profile.pincode,
+        'interests': buyer_profile.interests or [],
+        'properties_of_interest': buyer_profile.properties_of_interest or [],
+        'country': buyer_profile.country,
+        'state': buyer_profile.state,
+        'city': buyer_profile.city,
+        'address': buyer_profile.address,
+        'mobile': buyer_profile.mobile,
+        'website': buyer_profile.website,
+        'instagram': buyer_profile.instagram,
+        'year_of_starting_business': buyer_profile.year_of_starting_business,
+        'selling_wayanad': buyer_profile.selling_wayanad,
+        'since_when': buyer_profile.since_when,
+        'bio': buyer_profile.bio,
+        'profile_image': buyer_profile.profile_image,
+        'created_at': buyer_profile.created_at.isoformat() if buyer_profile.created_at else None,
+        'updated_at': buyer_profile.updated_at.isoformat() if buyer_profile.updated_at else None,
+        'user': {
+            'id': user.id,
+            'username': user.username,
+            'email': user.email,
+            'role': user.role,
+            'created_at': user.created_at.isoformat() if user.created_at else None
+        }
+    }
+    
+    # Get buyer profile image using helper functions
+    try:
+        # Get buyer profile images
+        image_files = get_buyer_profile_images(buyer_id)
+        if image_files:
+            # Sort by timestamp (most recent first) and get the latest image
+            image_files.sort(key=lambda x: x[0], reverse=True)
+            latest_timestamp, latest_filename, latest_file_info = image_files[0]
+            
+            # Convert image to base64 data URL
+            image_data = convert_image_to_base64_data_url(buyer_id, latest_filename)
+            buyer_dict['profile_image'] = image_data['image_data_url']
+        else:
+            # No image found, keep existing profile_image value or set to None
+            if not buyer_dict.get('profile_image'):
+                buyer_dict['profile_image'] = None
+    except Exception as e:
+        # Log error but don't fail the request
+        logging.error(f"Error retrieving buyer profile image: {str(e)}")
+        # Keep existing profile_image value or set to None
+        if not buyer_dict.get('profile_image'):
+            buyer_dict['profile_image'] = None
+    
+    # Skip meeting quota calculation for performance
+    # No quota information will be added to the response
+    
+    return jsonify({
+        'buyer': buyer_dict
+    }), 200
+
+@buyers.route('/<int:buyer_id>/minimal', methods=['GET'])
+@jwt_required()
+def get_buyer_without_profile_image_quota(buyer_id):
+    """Get a specific buyer's details without profile image or quota information"""
+    # Find the buyer profile
+    buyer_profile = BuyerProfile.query.filter_by(user_id=buyer_id).first()
+    
+    if not buyer_profile:
+        return jsonify({
+            'error': 'Buyer not found'
+        }), 404
+    
+    # Check if the associated user is actually a buyer
+    user = User.query.get(buyer_id)
+    if not user or user.role != 'buyer':
+        return jsonify({
+            'error': 'User is not a buyer'
+        }), 400
+    
+    # Convert to dict format without problematic relationships
+    buyer_dict = {
+        'id': buyer_profile.id,
+        'user_id': buyer_profile.user_id,
+        'name': buyer_profile.name,
+        'organization': buyer_profile.organization,
+        'designation': buyer_profile.designation,
+        'operator_type': buyer_profile.operator_type,
+        'category_id': buyer_profile.category_id,
+        'salutation': buyer_profile.salutation,
+        'first_name': buyer_profile.first_name,
+        'last_name': buyer_profile.last_name,
+        'vip': buyer_profile.vip,
+        'status': buyer_profile.status,
+        'gst': buyer_profile.gst,
+        'pincode': buyer_profile.pincode,
+        'interests': buyer_profile.interests or [],
+        'properties_of_interest': buyer_profile.properties_of_interest or [],
+        'country': buyer_profile.country,
+        'state': buyer_profile.state,
+        'city': buyer_profile.city,
+        'address': buyer_profile.address,
+        'mobile': buyer_profile.mobile,
+        'website': buyer_profile.website,
+        'instagram': buyer_profile.instagram,
+        'year_of_starting_business': buyer_profile.year_of_starting_business,
+        'selling_wayanad': buyer_profile.selling_wayanad,
+        'since_when': buyer_profile.since_when,
+        'bio': buyer_profile.bio,
+        'profile_image': buyer_profile.profile_image,  # Use existing profile_image value
+        'created_at': buyer_profile.created_at.isoformat() if buyer_profile.created_at else None,
+        'updated_at': buyer_profile.updated_at.isoformat() if buyer_profile.updated_at else None,
+        'user': {
+            'id': user.id,
+            'username': user.username,
+            'email': user.email,
+            'role': user.role,
+            'created_at': user.created_at.isoformat() if user.created_at else None
+        }
+    }
+    
+    # Skip profile image fetching from Nextcloud for performance
+    # Use existing profile_image value from database or set to None
+    if not buyer_dict.get('profile_image'):
+        buyer_dict['profile_image'] = None
+    
+    # Skip meeting quota calculation for performance
+    # No quota information will be added to the response
     
     return jsonify({
         'buyer': buyer_dict
@@ -594,9 +831,24 @@ def get_buyers_by_user_ids_with_quota_info():
                 User.id.in_(valid_buyer_ids)
             ).order_by(BuyerProfile.organization.asc()).all()
             
+            # Use batch method to calculate quota information for all buyers at once
+            try:
+                updated_profiles = batch_calculate_buyer_meeting_quota(buyer_profiles)
+            except Exception as e:
+                logging.error(f"Error in batch quota calculation: {str(e)}")
+                # Fallback to individual calculations if batch fails
+                updated_profiles = buyer_profiles
+                for profile in updated_profiles:
+                    try:
+                        quota_info = calculate_buyer_meeting_quota(profile.user_id, profile)
+                        profile.quota_info = quota_info
+                    except Exception as quota_error:
+                        logging.error(f"Error calculating quota for buyer {profile.user_id}: {str(quota_error)}")
+                        profile.quota_info = {}
+            
             # Convert to dict format with meeting quota information
             buyers_data = []
-            for b in buyer_profiles:
+            for b in updated_profiles:
                 try:
                     buyer_dict = {
                         'id': b.id,
@@ -638,13 +890,9 @@ def get_buyers_by_user_ids_with_quota_info():
                         }
                     }
                     
-                    # Calculate meeting quota information for each buyer
-                    try:
-                        meeting_quota = calculate_buyer_meeting_quota(b.user_id, b)
-                        buyer_dict.update(meeting_quota)
-                    except Exception as e:
-                        logging.error(f"Error calculating quota for buyer {b.user_id}: {str(e)}")
-                        # Continue without quota info
+                    # Add quota information from batch calculation
+                    if hasattr(b, 'quota_info') and b.quota_info:
+                        buyer_dict.update(b.quota_info)
                     
                     buyers_data.append(buyer_dict)
                 except Exception as e:

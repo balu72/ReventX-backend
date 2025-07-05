@@ -1,5 +1,6 @@
 from datetime import datetime
 from ..models import db, Meeting, MeetingStatus, BuyerCategory, SystemSetting, Stall
+from collections import defaultdict
 
 def calculate_buyer_meeting_quota(user_id, buyer_profile):
     """
@@ -248,3 +249,134 @@ def calculate_seller_meeting_quota(seller_id, seller_profile):
         'canSellerAcceptMeetingRequest': canSellerAcceptMeetingRequest,
         'sellerPendingMeetingRequestCount': currentPendingMeetingCount
     }
+
+
+def batch_calculate_buyer_meeting_quota(buyer_profiles):
+    """
+    Calculate meeting quota information for multiple buyers in a single database query
+    
+    Args:
+        buyer_profiles (list): List of BuyerProfile objects
+        
+    Returns:
+        list: Updated buyer_profiles with quota information added to each profile
+    """
+    if not buyer_profiles:
+        return buyer_profiles
+    
+    # Extract all user_ids from buyer profiles
+    all_user_ids = [profile.user_id for profile in buyer_profiles]
+    
+    # Single query to get all meetings for all buyers (only buyer_id filter)
+    all_meetings = Meeting.query.filter(
+        Meeting.buyer_id.in_(all_user_ids)
+    ).all()
+    
+    # Get system settings once (shared across all buyers)
+    event_start_date = SystemSetting.query.filter_by(key='event_start_date').first()
+    event_end_date = SystemSetting.query.filter_by(key='event_end_date').first()
+    max_seller_attendees_setting = SystemSetting.query.filter_by(key='max_seller_attendees_per_day').first()
+    
+    # Calculate event duration once
+    if event_start_date and event_end_date and event_start_date.value and event_end_date.value:
+        try:
+            start_date_str = event_start_date.value.split('T')[0]
+            end_date_str = event_end_date.value.split('T')[0]
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
+            event_days = (end_date - start_date).days + 1
+        except (ValueError, TypeError, IndexError):
+            event_days = 3
+    else:
+        event_days = 3
+    
+    # Group meetings by buyer_id for efficient processing
+    meetings_by_buyer = defaultdict(list)
+    for meeting in all_meetings:
+        meetings_by_buyer[meeting.buyer_id].append(meeting)
+    
+    # Get buyer categories once for all buyers that have category_id
+    category_ids = [profile.category_id for profile in buyer_profiles if profile.category_id]
+    buyer_categories = {}
+    if category_ids:
+        categories = BuyerCategory.query.filter(BuyerCategory.id.in_(category_ids)).all()
+        buyer_categories = {cat.id: cat for cat in categories}
+    
+    # Process expired meetings in batch
+    current_time = datetime.now()
+    expired_meetings = []
+    
+    for meeting in all_meetings:
+        if (meeting.status in [MeetingStatus.PENDING.value, MeetingStatus.PENDING.value.upper()] and
+            (not meeting.created_at or (current_time - meeting.created_at).total_seconds() > 48 * 3600)):
+            meeting.status = MeetingStatus.EXPIRED
+            expired_meetings.append(meeting)
+    
+    # Commit expired meetings changes if any
+    if expired_meetings:
+        db.session.commit()
+    
+    # Process each buyer profile and calculate quota
+    for profile in buyer_profiles:
+        buyer_meetings = meetings_by_buyer.get(profile.user_id, [])
+        
+        # Count meetings by status after expiration cleanup
+        pending_count = 0
+        accepted_count = 0
+        active_count = 0
+        
+        for meeting in buyer_meetings:
+            status_upper = meeting.status.upper() if meeting.status else ''
+            
+            if status_upper == MeetingStatus.PENDING.value.upper():
+                pending_count += 1
+                active_count += 1
+            elif status_upper == MeetingStatus.ACCEPTED.value.upper():
+                accepted_count += 1
+                active_count += 1
+        
+        # Get max meetings allowed based on buyer category
+        if profile.category_id and profile.category_id in buyer_categories:
+            buyer_category = buyer_categories[profile.category_id]
+            max_meetings_per_category = buyer_category.max_meetings if buyer_category else -1
+        else:
+            max_meetings_per_category = -1
+        
+        # If category doesn't specify max meetings or value is negative, use system setting
+        if max_meetings_per_category is None or max_meetings_per_category < 0:
+            max_meetings_per_day = int(max_seller_attendees_setting.value) if max_seller_attendees_setting else 30
+        else:
+            max_meetings_per_day = max_meetings_per_category
+        
+        # Calculate allowed meeting quota - A buyer will attend only one day so we don't multiply by event_days
+        buyerAllowedMeetingQuota = max_meetings_per_day
+        
+        # Calculate remaining accept count
+        buyerRemainingAcceptCount = max(0, buyerAllowedMeetingQuota - accepted_count)
+        
+        # Determine if buyer can accept more meeting requests
+        canBuyerAcceptMeetingRequest = accepted_count < buyerAllowedMeetingQuota
+        
+        # Calculate total meeting request quota - Allowed requests is twice the allowed meetings
+        buyerMeetingRequestQuota = buyerAllowedMeetingQuota * 2
+        
+        # Calculate remaining meeting requests using new formula
+        remainingMeetingRequestCount = max(0, buyerMeetingRequestQuota - (2 * accepted_count) - pending_count)
+        
+        # Add quota information to the buyer profile
+        quota_info = {
+            'buyerMeetingRequestQuota': buyerMeetingRequestQuota,
+            'buyerMeetingQuotaExceeded': active_count >= buyerMeetingRequestQuota,
+            'currentMeetingRequestCount': active_count,
+            'remainingMeetingRequestCount': remainingMeetingRequestCount,
+            'currentBuyerAcceptedMeetingCount': accepted_count,
+            'buyerAllowedMeetingQuota': buyerAllowedMeetingQuota,
+            'buyerRemainingAcceptCount': buyerRemainingAcceptCount,
+            'canBuyerAcceptMeetingRequest': canBuyerAcceptMeetingRequest,
+            'buyerPendingMeetingRequestCount': pending_count
+        }
+        
+        # Store quota info as an attribute on the profile object
+        profile.quota_info = quota_info
+    
+    return buyer_profiles

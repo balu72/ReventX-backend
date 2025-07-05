@@ -226,8 +226,24 @@ def convert_image_to_base64_data_url(buyer_id, filename):
     image_path = f"{buyer_profile_dir}/{filename}"
     
     # Fetch file metadata
-    info = nc.files.info(image_path)
-    mime = info.mime  # e.g. 'image/jpeg'
+    try:
+        info = nc.files.file_info(image_path)
+        mime = info.mime  # e.g. 'image/jpeg'
+    except Exception as e:
+        # Fallback: determine MIME type from file extension
+        logging.warning(f"Could not get MIME type from file info for {image_path}: {str(e)}")
+        
+        # Extract file extension
+        file_extension = filename.lower().split('.')[-1]
+        
+        # Map extension to MIME type
+        if file_extension == 'png':
+            mime = 'image/png'
+        elif file_extension in ['jpg', 'jpeg']:
+            mime = 'image/jpeg'
+        else:
+            # This shouldn't happen as we validate file types elsewhere, but just in case
+            raise Exception(f"Unsupported image type: {file_extension}")
     
     # Stream download into memory
     buf = BytesIO()
