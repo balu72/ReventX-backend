@@ -25,6 +25,7 @@ from ..utils.buyer_utils import (
     get_nextcloud_connection,
     create_buyer_directories,
     get_buyer_profile_images,
+    get_first_buyer_profile_image,
     convert_image_to_base64_data_url,
     validate_image_file,
     generate_buyer_image_filename,
@@ -157,35 +158,29 @@ def get_profile():
     # Get the profile as a dictionary
     profile_dict = buyer_profile.to_dict()
     
-    # Get buyer profile image using helper functions
+    # Get buyer profile image using optimized helper function
     try:
-        # Get Nextcloud connection
-        nc = get_nextcloud_connection()
-        if nc:
-            # Get buyer profile images
-            image_files = get_buyer_profile_images(user_id)
-            if image_files:
-                # Sort by timestamp (most recent first) and get the latest image
-                image_files.sort(key=lambda x: x[0], reverse=True)
-                latest_timestamp, latest_filename, latest_file_info = image_files[0]
+        # Use optimized direct image lookup if profile_image path exists
+        if buyer_profile.profile_image:
+            file_info = get_first_buyer_profile_image(user_id, buyer_profile.profile_image)
+            if file_info:
+                # Extract filename from the stored path
+                filename = buyer_profile.profile_image.split('/')[-1]
                 
                 # Convert image to base64 data URL
-                image_data = convert_image_to_base64_data_url(user_id, latest_filename)
+                image_data = convert_image_to_base64_data_url(user_id, filename)
                 profile_dict['profile_image'] = image_data['image_data_url']
             else:
-                # No image found, keep existing profile_image value or set to None
-                if not profile_dict.get('profile_image'):
-                    profile_dict['profile_image'] = None
-        else:
-            # Nextcloud not available, keep existing profile_image value
-            if not profile_dict.get('profile_image'):
+                # File not found in Nextcloud, but path exists in DB
+                logging.warning(f"Profile image not found in Nextcloud for buyer {user_id}: {buyer_profile.profile_image}")
                 profile_dict['profile_image'] = None
+        else:
+            # No profile image path stored
+            profile_dict['profile_image'] = None
     except Exception as e:
         # Log error but don't fail the request
-        logging.error(f"Error retrieving buyer profile image: {str(e)}")
-        # Keep existing profile_image value or set to None
-        if not profile_dict.get('profile_image'):
-            profile_dict['profile_image'] = None
+        logging.error(f"Error retrieving buyer profile image for user {user_id}: {str(e)}")
+        profile_dict['profile_image'] = None
     
     # Calculate meeting quota information
     meeting_quota = calculate_buyer_meeting_quota(user_id, buyer_profile)

@@ -207,6 +207,42 @@ def get_buyer_profile_images(buyer_id):
         else:
             raise e
 
+def get_first_buyer_profile_image(buyer_id, profile_image_path):
+    """
+    Optimized: Get specific buyer profile image directly by full path
+    
+    Args:
+        buyer_id (int): Buyer user ID
+        profile_image_path (str): Full path like "/Photos/buyer_123/profile/buyer_123_1641234567.jpg"
+        
+    Returns:
+        FsNode or None: File info if found, None otherwise
+    """
+    nc = get_nextcloud_connection()
+    if not nc:
+        return None
+    
+    if not profile_image_path:
+        return None
+    
+    # Extract filename from full path
+    # "/Photos/buyer_123/profile/buyer_123_1641234567.jpg" -> "buyer_123_1641234567.jpg"
+    filename = profile_image_path.split('/')[-1]
+    
+    # Construct the directory path
+    buyer_profile_dir = f"/Photos/buyer_{buyer_id}/profile"
+    
+    try:
+        results = nc.files.find(["eq", "name", filename], path=buyer_profile_dir)
+        if results:
+            return results[0]  # Return the FsNode directly
+        return None
+    except NextcloudException as e:
+        if e.status_code == 404:
+            return None
+        else:
+            raise e
+
 def convert_image_to_base64_data_url(buyer_id, filename):
     """
     Helper function to convert image to base64 data URL.
