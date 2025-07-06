@@ -400,9 +400,95 @@ def log_buyer_image_response(response_data, context):
     logging.info(f"Buyer image response ({context}): {response_data}")
 
 # DateTime helper functions
+def parse_datetime_safely(datetime_str, field_name="datetime"):
+    """
+    Safely parse datetime string with enhanced error handling and format normalization.
+    
+    Args:
+        datetime_str (str): The datetime string to parse
+        field_name (str): Name of the field for error logging
+        
+    Returns:
+        datetime: Parsed datetime object or current time as fallback
+    """
+    if not datetime_str or datetime_str == '':
+        logging.warning(f"Empty {field_name} provided, using current time as fallback")
+        return datetime.now()
+    
+    # Handle common malformed datetime patterns
+    original_str = datetime_str
+    
+    # Fix malformed 'T:00' pattern - replace with 'T00:00:00'
+    if datetime_str.endswith('T:00'):
+        datetime_str = datetime_str.replace('T:00', 'T00:00:00')
+        logging.info(f"Fixed malformed {field_name}: '{original_str}' -> '{datetime_str}'")
+    
+    # Fix incomplete time patterns like 'T12:' or 'T12:30'
+    if 'T' in datetime_str:
+        date_part, time_part = datetime_str.split('T', 1)
+        
+        # Remove timezone info for processing
+        timezone_suffix = ''
+        if time_part.endswith('Z'):
+            timezone_suffix = 'Z'
+            time_part = time_part[:-1]
+        elif '+' in time_part:
+            parts = time_part.split('+')
+            time_part = parts[0]
+            timezone_suffix = '+' + parts[1]
+        
+        # Normalize time part
+        time_components = time_part.split(':')
+        if len(time_components) == 1:
+            # Only hour provided
+            if time_components[0] == '':
+                time_part = '00:00:00'
+            else:
+                time_part = f"{time_components[0].zfill(2)}:00:00"
+        elif len(time_components) == 2:
+            # Hour and minute provided
+            time_part = f"{time_components[0].zfill(2)}:{time_components[1].zfill(2)}:00"
+        elif len(time_components) == 3:
+            # Hour, minute, and second provided
+            time_part = f"{time_components[0].zfill(2)}:{time_components[1].zfill(2)}:{time_components[2].zfill(2)}"
+        
+        # Reconstruct datetime string
+        datetime_str = f"{date_part}T{time_part}{timezone_suffix}"
+        
+        if datetime_str != original_str:
+            logging.info(f"Normalized {field_name}: '{original_str}' -> '{datetime_str}'")
+    
+    try:
+        # Try parsing with fromisoformat first
+        if datetime_str.endswith('Z'):
+            # Handle Z timezone
+            return datetime.fromisoformat(datetime_str.replace('Z', '+00:00'))
+        else:
+            return datetime.fromisoformat(datetime_str)
+    except (ValueError, TypeError) as e:
+        logging.error(f"Error parsing {field_name} '{original_str}': {str(e)}")
+        
+        # Try alternative parsing methods
+        try:
+            # Try parsing without timezone info
+            clean_str = datetime_str.replace('Z', '').split('+')[0].split('-')[0:3]
+            if len(clean_str) >= 3:
+                clean_str = '-'.join(clean_str[0:3])
+                if 'T' in datetime_str:
+                    time_part = datetime_str.split('T')[1].replace('Z', '').split('+')[0]
+                    clean_str += f"T{time_part}"
+                
+                return datetime.fromisoformat(clean_str)
+        except:
+            pass
+        
+        # Final fallback
+        logging.warning(f"Using current time as fallback for malformed {field_name}: '{original_str}'")
+        return datetime.now()
+
 def get_outbound_departure_datetime(data):
     """
-    Helper function to get outbound departure datetime.
+    Helper function to get outbound departure datetime with enhanced error handling.
     """
     from ..models import SystemSetting
     
@@ -410,9 +496,11 @@ def get_outbound_departure_datetime(data):
     if data is None or not data or 'outbound' not in data:
         return datetime.now()  # Default to current time
         
-    if (not data['outbound'].get('departureDateTime') or 
-        data['outbound']['departureDateTime'] == '' or 
-        data['outbound']['departureDateTime'] == 'T:00'):
+    departure_datetime = data['outbound'].get('departureDateTime')
+    
+    if (not departure_datetime or 
+        departure_datetime == '' or 
+        departure_datetime == 'T:00'):
         # Default to current time minus 2 hours (assuming arrival is event time)
         event_start_date = SystemSetting.query.filter_by(key='event_start_date').first()
         if event_start_date and event_start_date.value:
@@ -448,16 +536,12 @@ def get_outbound_departure_datetime(data):
         # Default to current time if setting not found
         return datetime.now()
     else:
-        try:
-            # Use the provided datetime
-            return datetime.fromisoformat(data['outbound']['departureDateTime'])
-        except (ValueError, TypeError) as e:
-            logging.error(f"Error parsing outbound departure datetime: {str(e)}")
-            return datetime.now()
+        # Use the enhanced datetime parser
+        return parse_datetime_safely(departure_datetime, "outbound departure datetime")
 
 def get_outbound_arrival_datetime(data):
     """
-    Helper function to get outbound arrival datetime.
+    Helper function to get outbound arrival datetime with enhanced error handling.
     """
     from ..models import SystemSetting
     
@@ -465,9 +549,11 @@ def get_outbound_arrival_datetime(data):
     if data is None or not data or 'outbound' not in data:
         return datetime.now()  # Default to current time
         
-    if (not data['outbound'].get('arrivalDateTime') or 
-        data['outbound']['arrivalDateTime'] == '' or 
-        data['outbound']['arrivalDateTime'] == 'T:00'):
+    arrival_datetime = data['outbound'].get('arrivalDateTime')
+    
+    if (not arrival_datetime or 
+        arrival_datetime == '' or 
+        arrival_datetime == 'T:00'):
         # Get event start date from system settings
         event_start_date = SystemSetting.query.filter_by(key='event_start_date').first()
         if event_start_date and event_start_date.value:
@@ -503,16 +589,12 @@ def get_outbound_arrival_datetime(data):
         # Default to current time if setting not found
         return datetime.now()
     else:
-        try:
-            # Use the provided datetime
-            return datetime.fromisoformat(data['outbound']['arrivalDateTime'])
-        except (ValueError, TypeError) as e:
-            logging.error(f"Error parsing outbound arrival datetime: {str(e)}")
-            return datetime.now()
+        # Use the enhanced datetime parser
+        return parse_datetime_safely(arrival_datetime, "outbound arrival datetime")
 
 def get_return_departure_datetime(data):
     """
-    Helper function to get return departure datetime.
+    Helper function to get return departure datetime with enhanced error handling.
     """
     from ..models import SystemSetting
     
@@ -520,9 +602,11 @@ def get_return_departure_datetime(data):
     if data is None or not data or 'return' not in data:
         return datetime.now()  # Default to current time
         
-    if (not data['return'].get('departureDateTime') or 
-        data['return']['departureDateTime'] == '' or 
-        data['return']['departureDateTime'] == 'T:00'):
+    departure_datetime = data['return'].get('departureDateTime')
+    
+    if (not departure_datetime or 
+        departure_datetime == '' or 
+        departure_datetime == 'T:00'):
         # Get event end date from system settings
         event_end_date = SystemSetting.query.filter_by(key='event_end_date').first()
         if event_end_date and event_end_date.value:
@@ -558,16 +642,12 @@ def get_return_departure_datetime(data):
         # Default to current time if setting not found
         return datetime.now()
     else:
-        try:
-            # Use the provided datetime
-            return datetime.fromisoformat(data['return']['departureDateTime'])
-        except (ValueError, TypeError) as e:
-            logging.error(f"Error parsing return departure datetime: {str(e)}")
-            return datetime.now()
+        # Use the enhanced datetime parser
+        return parse_datetime_safely(departure_datetime, "return departure datetime")
 
 def get_return_arrival_datetime(data):
     """
-    Helper function to get return arrival datetime.
+    Helper function to get return arrival datetime with enhanced error handling.
     """
     from ..models import SystemSetting
     
@@ -575,9 +655,11 @@ def get_return_arrival_datetime(data):
     if data is None or not data or 'return' not in data:
         return datetime.now()  # Default to current time
         
-    if (not data['return'].get('arrivalDateTime') or 
-        data['return']['arrivalDateTime'] == '' or 
-        data['return']['arrivalDateTime'] == 'T:00'):
+    arrival_datetime = data['return'].get('arrivalDateTime')
+    
+    if (not arrival_datetime or 
+        arrival_datetime == '' or 
+        arrival_datetime == 'T:00'):
         # Get event end date from system settings
         event_end_date = SystemSetting.query.filter_by(key='event_end_date').first()
         if event_end_date and event_end_date.value:
@@ -613,9 +695,5 @@ def get_return_arrival_datetime(data):
         # Default to current time if setting not found
         return datetime.now()
     else:
-        try:
-            # Use the provided datetime
-            return datetime.fromisoformat(data['return']['arrivalDateTime'])
-        except (ValueError, TypeError) as e:
-            logging.error(f"Error parsing return arrival datetime: {str(e)}")
-            return datetime.now()
+        # Use the enhanced datetime parser
+        return parse_datetime_safely(arrival_datetime, "return arrival datetime")

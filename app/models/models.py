@@ -691,6 +691,9 @@ class Accommodation(db.Model):
             'special_notes': self.special_notes,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            # Map host property data to expected frontend fields
+            'name': self.host_property.property_name if self.host_property else 'N/A',
+            'address': self.host_property.property_address if self.host_property and self.host_property.property_address else 'Address not available',
             # Include related data for convenience
             'host_property': self.host_property.to_dict() if self.host_property else None,
             'buyer': {
