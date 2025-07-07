@@ -107,7 +107,7 @@ def get_seller(seller_id):
         # If no PUBLIC_SITE_URL, seller_full_microsite_url keeps the original microsite_url
     # Get seller data and add meeting quota information
     seller_data = seller_profile.to_dict()
-    seller_data["seller_full_microsite_url"] = seller_full_microsite_url
+    seller_data["full_microsite_url"] = seller_full_microsite_url
     seller_data.update(meeting_quota)
     
     return jsonify({
@@ -184,7 +184,7 @@ def get_own_profile():
     
     # Get seller data and add meeting quota information
     seller_data = seller_profile.to_dict()
-    seller_data["seller_full_microsite_url"] = seller_full_microsite_url
+    seller_data["full_microsite_url"] = seller_full_microsite_url
     seller_data.update(meeting_quota)
     
     return jsonify({
