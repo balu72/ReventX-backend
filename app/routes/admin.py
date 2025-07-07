@@ -3068,3 +3068,67 @@ def deactivate_buyer(buyer_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': f'Failed to deactivate buyer: {str(e)}'}), 500
+
+@admin.route('/stall-inventory-stats', methods=['GET'])
+@admin_required
+def get_stall_inventory_stats():
+    """
+    Get stall inventory statistics grouped by floor/area (admin only)
+    """
+    try:
+        from ..models import StallInventory
+        
+        # Get all stall inventory records
+        all_stalls = StallInventory.query.all()
+        
+        # Initialize counters
+        stats = {
+            'ground_floor': {'total_stalls': 0, 'occupied': 0, 'available': 0},
+            'first_floor': {'total_stalls': 0, 'occupied': 0, 'available': 0},
+            'german_tents': {'total_stalls': 0, 'occupied': 0, 'available': 0},
+            'tablespaces': {'total_stalls': 0, 'occupied': 0, 'available': 0}
+        }
+        
+        # Process each stall
+        for stall in all_stalls:
+            stall_number = stall.stall_number.strip().upper()
+            
+            # Determine category based on stall number pattern
+            category = None
+            
+            # Ground Floor: G followed by 1-3 digits
+            if re.match(r'^G\d{1,3}$', stall_number):
+                category = 'ground_floor'
+            # First Floor: F followed by 1-3 digits
+            elif re.match(r'^F\d{1,3}$', stall_number):
+                category = 'first_floor'
+            # Tablespaces: GTT followed by 1-3 digits (check this first to avoid matching GT pattern)
+            elif re.match(r'^GTT\d{1,3}$', stall_number):
+                category = 'tablespaces'
+            # German Tents: GT followed by 1-3 digits (but not GTT)
+            elif re.match(r'^GT\d{1,3}$', stall_number):
+                category = 'german_tents'
+            
+            # Update stats if category is recognized
+            if category:
+                stats[category]['total_stalls'] += 1
+                if stall.is_allocated:
+                    stats[category]['occupied'] += 1
+                else:
+                    stats[category]['available'] += 1
+        
+        return jsonify({
+            'message': 'Stall inventory statistics retrieved successfully',
+            'stall_stats': stats
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': f'Failed to retrieve stall inventory statistics: {str(e)}',
+            'stall_stats': {
+                'ground_floor': {'total_stalls': 0, 'occupied': 0, 'available': 0},
+                'first_floor': {'total_stalls': 0, 'occupied': 0, 'available': 0},
+                'german_tents': {'total_stalls': 0, 'occupied': 0, 'available': 0},
+                'tablespaces': {'total_stalls': 0, 'occupied': 0, 'available': 0}
+            }
+        }), 500

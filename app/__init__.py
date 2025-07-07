@@ -75,6 +75,7 @@ def create_app():
     from .routes.stall import stall
     from .routes.stall_types import stall_types
     from .routes.admin_reports import admin_reports
+    from .routes.floorplan import floorplan
     
     app.register_blueprint(main)
     app.register_blueprint(auth)
@@ -88,6 +89,7 @@ def create_app():
     app.register_blueprint(buyers)
     app.register_blueprint(stall)
     app.register_blueprint(stall_types)
+    app.register_blueprint(floorplan)
     app.register_blueprint(health_bp, url_prefix='/api')
     
     # Create database tables (only if database is available)
