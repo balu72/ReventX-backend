@@ -1573,6 +1573,56 @@ def deallocate_stall(stall_id):
         db.session.rollback()
         return jsonify({'error': f'Failed to deallocate stall: {str(e)}'}), 500
 
+@admin.route('/stalls/<int:stall_id>/remove-stall-number', methods=['PUT'])
+@admin_required
+def remove_stall_number(stall_id):
+    """
+    Remove stall number allocation from a stall (admin only)
+    This clears the allocated_stall_number and stall_id fields in the stalls table
+    and sets is_allocated=false in the stall_inventory table
+    """
+    try:
+        # Find the stall
+        from ..models import Stall, StallInventory
+        stall = Stall.query.get(stall_id)
+        if not stall:
+            return jsonify({'error': 'Stall not found'}), 404
+        
+        # Store seller info for response
+        seller_name = stall.seller.seller_profile.business_name if stall.seller and stall.seller.seller_profile else 'Unknown'
+        
+        # Step 1: Store the current stall_id for the current stall type in a local variable
+        stored_stall_id = stall.stall_id
+        
+        # Step 2: In the stalls table, set fields "allocated_stall_number" to NULL, set "stall_id" to NULL
+        stall.allocated_stall_number = None
+        stall.stall_id = None
+        
+        # Update timestamp
+        stall.updated_at = datetime.utcnow()
+        
+        # Step 3: In the stall_inventory table, for that row where id = stall_id set is_allocated = false
+        if stored_stall_id:
+            inventory_stall = StallInventory.query.get(stored_stall_id)
+            if inventory_stall:
+                inventory_stall.is_allocated = False
+                db.session.add(inventory_stall)
+        
+        # Add the updated stall to the session
+        db.session.add(stall)
+        
+        # Commit all changes
+        db.session.commit()
+        
+        return jsonify({
+            'message': f'Stall number removed successfully from {seller_name}',
+            'stall': stall.to_dict()
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Failed to remove stall number: {str(e)}'}), 500
+
 @admin.route('/stalls', methods=['GET'])
 @admin_required
 def get_all_stalls():
