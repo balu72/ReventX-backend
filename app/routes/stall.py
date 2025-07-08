@@ -190,6 +190,40 @@ def update_stall_fascia_name(stall_id):
             'message': str(e)
         }), 500
 
+@stall.route('/inventory/available/<int:stall_type_id>', methods=['GET'])
+@jwt_required()
+@admin_required
+def get_available_stalls_by_type(stall_type_id):
+    """Get available stalls from inventory for a specific stall type (admin only)"""
+    try:
+        from ..models import StallType
+        
+        # Verify stall type exists
+        stall_type = StallType.query.get(stall_type_id)
+        if not stall_type:
+            return jsonify({'error': 'Invalid stall type ID'}), 400
+        
+        # Get available stalls for this stall type
+        available_stalls = StallInventory.query.filter_by(
+            stall_type_id=stall_type_id,
+            is_allocated=False
+        ).order_by(StallInventory.stall_number).all()
+        
+        return jsonify({
+            'message': f'Available stalls for stall type {stall_type.name} retrieved successfully',
+            'stall_type_id': stall_type_id,
+            'stall_type_name': stall_type.name,
+            'available_stalls': [stall.to_dict() for stall in available_stalls],
+            'total_available': len(available_stalls)
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': f'Failed to retrieve available stalls: {str(e)}',
+            'available_stalls': [],
+            'total_available': 0
+        }), 500
+
 @stall.route('/<int:stall_id>/select_stall_number', methods=['PUT'])
 @jwt_required()
 @seller_required

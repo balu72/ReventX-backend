@@ -1095,3 +1095,41 @@ class MigrationMappingSellers(db.Model):
     # Relationships
     user = db.relationship('User', backref=db.backref('seller_migration_mappings', lazy=True))
     seller_profile = db.relationship('SellerProfile', backref=db.backref('migration_mappings', lazy=True))
+
+class StallDistanceMatrix(db.Model):
+    __tablename__ = 'stall_distance_matrix'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    origin_stall_id = db.Column(db.Integer, db.ForeignKey('stall_inventory.id'), nullable=False, index=True)
+    destination_stall_id = db.Column(db.Integer, db.ForeignKey('stall_inventory.id'), nullable=False)
+    distance = db.Column(db.SmallInteger, nullable=False)
+    created_at = db.Column(db.DateTime, nullable=True)
+    updated_at = db.Column(db.DateTime, nullable=True)
+    
+    # Relationships
+    origin_stall = db.relationship('StallInventory', foreign_keys=[origin_stall_id], backref=db.backref('origin_distances', lazy=True))
+    destination_stall = db.relationship('StallInventory', foreign_keys=[destination_stall_id], backref=db.backref('destination_distances', lazy=True))
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'origin_stall_id': self.origin_stall_id,
+            'destination_stall_id': self.destination_stall_id,
+            'distance': self.distance,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'origin_stall': {
+                'id': self.origin_stall.id,
+                'stall_number': self.origin_stall.stall_number,
+                'stall_type_id': self.origin_stall.stall_type_id,
+                'allow_seller_selection': self.origin_stall.allow_seller_selection,
+                'is_allocated': self.origin_stall.is_allocated
+            } if self.origin_stall else None,
+            'destination_stall': {
+                'id': self.destination_stall.id,
+                'stall_number': self.destination_stall.stall_number,
+                'stall_type_id': self.destination_stall.stall_type_id,
+                'allow_seller_selection': self.destination_stall.allow_seller_selection,
+                'is_allocated': self.destination_stall.is_allocated
+            } if self.destination_stall else None
+        }

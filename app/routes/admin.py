@@ -1341,6 +1341,7 @@ def get_buyer_category(category_id):
 def allocate_stall_to_seller(seller_id):
     """
     Allocate a stall type to a seller (admin only)
+    Can handle both new allocation and updating existing stall allocation
     """
     data = request.get_json()
     
@@ -1348,18 +1349,23 @@ def allocate_stall_to_seller(seller_id):
     if not data:
         return jsonify({'error': 'No data provided'}), 400
     
-    # Validate required fields
-    if 'stall_type_id' not in data:
-        return jsonify({'error': 'Missing required field: stall_type_id'}), 400
-    
     try:
         # Find the seller
         seller = User.query.get(seller_id)
         if not seller or not seller.is_seller():
             return jsonify({'error': 'Seller not found'}), 404
         
+        # Check if this is an update to existing stall (stall_id provided)
+        if 'stall_id' in data and data['stall_id']:
+            return update_existing_stall_allocation(data['stall_id'], data)
+        
+        # This is a new stall allocation
+        # Validate required fields for new allocation
+        if 'stall_type_id' not in data:
+            return jsonify({'error': 'Missing required field: stall_type_id'}), 400
+        
         # Verify stall type exists
-        from ..models import StallType, Stall
+        from ..models import StallType, Stall, StallInventory
         stall_type = StallType.query.get(data['stall_type_id'])
         if not stall_type:
             return jsonify({'error': 'Invalid stall type ID'}), 400
@@ -1384,13 +1390,41 @@ def allocate_stall_to_seller(seller_id):
                     'error': 'Stall number already exists for this seller'
                 }), 400
         
+        # Handle stall inventory allocation if stall_inventory_id is provided
+        stall_id = None
+        allocated_stall_number = data.get('allocated_stall_number', '')
+        
+        if 'stall_inventory_id' in data and data['stall_inventory_id']:
+            stall_inventory_id = int(data['stall_inventory_id'])
+            
+            # Verify stall inventory exists and is available
+            inventory_stall = StallInventory.query.get(stall_inventory_id)
+            if not inventory_stall:
+                return jsonify({'error': 'Invalid stall inventory ID'}), 400
+            
+            if inventory_stall.is_allocated:
+                return jsonify({'error': 'Selected stall is already allocated'}), 400
+            
+            # Verify stall type matches
+            if inventory_stall.stall_type_id != data['stall_type_id']:
+                return jsonify({'error': 'Stall inventory type does not match selected stall type'}), 400
+            
+            # Set stall_id and allocated_stall_number from inventory
+            stall_id = stall_inventory_id
+            allocated_stall_number = inventory_stall.stall_number
+            
+            # Mark inventory stall as allocated
+            inventory_stall.is_allocated = True
+            db.session.add(inventory_stall)
+        
         # Create new stall allocation
         new_stall = Stall(
             seller_id=seller_id,
             stall_type_id=data['stall_type_id'],
             number=stall_number,
             fascia_name=fascia_name,
-            allocated_stall_number=data.get('allocated_stall_number', ''),
+            allocated_stall_number=allocated_stall_number,
+            stall_id=stall_id,
             is_allocated=True
         )
         
@@ -1405,6 +1439,84 @@ def allocate_stall_to_seller(seller_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': f'Failed to allocate stall: {str(e)}'}), 500
+
+def update_existing_stall_allocation(stall_id, data):
+    """
+    Helper function to update existing stall allocation with inventory stall
+    """
+    try:
+        from ..models import Stall, StallInventory
+        
+        # Find the specific stall record
+        stall = Stall.query.get(stall_id)
+        if not stall:
+            return jsonify({'error': 'Stall not found'}), 404
+        
+        # Handle stall inventory allocation
+        if 'stall_inventory_id' in data:
+            new_stall_inventory_id = data['stall_inventory_id']
+            
+            # If clearing allocation (None or empty string)
+            if not new_stall_inventory_id:
+                # Free the previously allocated inventory stall if exists
+                if stall.stall_id:
+                    previous_inventory = StallInventory.query.get(stall.stall_id)
+                    if previous_inventory:
+                        previous_inventory.is_allocated = False
+                        db.session.add(previous_inventory)
+                
+                # Clear stall allocation
+                stall.stall_id = None
+                stall.allocated_stall_number = None
+            else:
+                # Allocating to a new inventory stall
+                new_stall_inventory_id = int(new_stall_inventory_id)
+                
+                # Verify new stall inventory exists and is available
+                new_inventory_stall = StallInventory.query.get(new_stall_inventory_id)
+                if not new_inventory_stall:
+                    return jsonify({'error': 'Invalid stall inventory ID'}), 400
+                
+                if new_inventory_stall.is_allocated:
+                    return jsonify({'error': 'Selected stall is already allocated'}), 400
+                
+                # Verify stall type matches
+                if new_inventory_stall.stall_type_id != stall.stall_type_id:
+                    return jsonify({'error': 'Stall inventory type does not match stall type'}), 400
+                
+                # Free the previously allocated inventory stall if exists
+                if stall.stall_id and stall.stall_id != new_stall_inventory_id:
+                    previous_inventory = StallInventory.query.get(stall.stall_id)
+                    if previous_inventory:
+                        previous_inventory.is_allocated = False
+                        db.session.add(previous_inventory)
+                
+                # Update stall with new allocation
+                stall.stall_id = new_stall_inventory_id
+                stall.allocated_stall_number = new_inventory_stall.stall_number
+                
+                # Mark new inventory stall as allocated
+                new_inventory_stall.is_allocated = True
+                db.session.add(new_inventory_stall)
+        
+        # Update other fields if provided
+        if 'fascia_name' in data:
+            stall.fascia_name = data['fascia_name']
+        
+        # Update timestamp
+        stall.updated_at = datetime.utcnow()
+        
+        db.session.add(stall)
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Stall allocation updated successfully',
+            'stall': stall.to_dict()
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Failed to update stall allocation: {str(e)}'}), 500
 
 @admin.route('/sellers/<int:seller_id>/stalls', methods=['GET'])
 @admin_required
