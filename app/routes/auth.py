@@ -8,7 +8,8 @@ from flask_jwt_extended import (
 )
 from datetime import datetime, timedelta
 import re
-from ..models import db, User, UserRole, InvitedBuyer, PendingBuyer, DomainRestriction
+import logging
+from ..models import db, User, UserRole, InvitedBuyer, PendingBuyer, DomainRestriction, BuyerProfile, SellerProfile, SellerAttendee
 from ..utils.email_service import send_registration_confirmation_email
 
 auth = Blueprint('auth', __name__, url_prefix='/api/auth')
@@ -269,3 +270,139 @@ def register_invited():
         'message': 'Registration submitted successfully',
         'pending_buyer': pending_buyer.to_dict()
     }), 201
+
+@auth.route('/check_user_access/<user_slug>', methods=['GET'])
+def check_user_access(user_slug):
+    """Check user access information by user slug (public endpoint)"""
+    try:
+        # Trim the user_slug first
+        user_slug = user_slug.strip()
+        
+        # Check for seller-attendee pattern: S{1-3digits}SA{1-2digits}
+        seller_attendee_pattern = r'^S(\d{1,3})SA(\d{1,2})$'
+        match = re.match(seller_attendee_pattern, user_slug)
+        
+        if match:
+            seller_id = int(match.group(1).strip())  # Convert to int after trimming
+            attendee_number = int(match.group(2).strip())  # Convert to int after trimming
+            
+            # Validate seller exists in users table
+            seller_user = User.query.get(seller_id)
+            if not seller_user or seller_user.role != UserRole.SELLER.value:
+                return jsonify({'error': 'User not found'}), 404
+            
+            # Check if seller exists in seller_profiles table
+            seller_profile = SellerProfile.query.filter_by(user_id=seller_id).first()
+            if not seller_profile:
+                return jsonify({'error': 'Unable to locate seller details'}), 404
+            
+            # Call new helper function
+            return get_seller_attendee_info(seller_profile.id, attendee_number)
+        
+        # Extract user ID from slug (handle both "123" and "B123"/"S123" formats)
+        if user_slug.startswith(('B', 'S')):
+            user_id = int(user_slug[1:])  # Remove prefix
+        else:
+            user_id = int(user_slug)  # Direct numeric ID
+        
+        # Find user by ID
+        user = User.query.get(user_id)
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Based on user role, fetch appropriate profile
+        if user.role == UserRole.BUYER.value:
+            return get_buyer_access_info(user)
+        elif user.role == UserRole.SELLER.value:
+            return get_seller_access_info(user)
+        else:
+            return jsonify({'error': 'Invalid user type'}), 400
+            
+    except ValueError:
+        return jsonify({'error': 'Invalid user slug format'}), 400
+    except Exception as e:
+        return jsonify({'error': 'Internal server error'}), 500
+
+def get_buyer_access_info(user):
+    """Get access information for a buyer"""
+    buyer_profile = user.buyer_profile
+    if not buyer_profile:
+        return jsonify({'error': 'Unable to locate buyer details'}), 404
+    
+    # Name priority: use 'name' if available, else combine first_name + last_name
+    full_name = buyer_profile.name
+    if not full_name and (buyer_profile.first_name or buyer_profile.last_name):
+        full_name = f"{buyer_profile.first_name or ''} {buyer_profile.last_name or ''}".strip()
+    
+    # Get buyer profile image using the same helper function as in buyer.py
+    profile_image_data = None
+    try:
+        if buyer_profile.profile_image:
+            # Extract filename from the stored path
+            filename = buyer_profile.profile_image.split('/')[-1]
+            
+            # Convert image to base64 data URL using helper function
+            from ..utils.buyer_utils import convert_image_to_base64_data_url
+            image_data = convert_image_to_base64_data_url(user.id, filename)
+            profile_image_data = image_data['image_data_url']
+        else:
+            # No profile image path stored
+            profile_image_data = None
+    except Exception as e:
+        # Log error but don't fail the request
+        logging.error(f"Error retrieving buyer profile image for user {user.id}: {str(e)}")
+        profile_image_data = None
+    
+    return jsonify({
+        'fullName': full_name or '',
+        'company': buyer_profile.organization or '',
+        'designation': buyer_profile.designation or '',
+        'contactPhone': buyer_profile.mobile or '',
+        'contactEmail': user.email or '',
+        'profileImage': profile_image_data
+    })
+
+def get_seller_access_info(user):
+    """Get access information for a seller"""
+    seller_profile = user.seller_profile
+    if not seller_profile:
+        return jsonify({'error': 'Unable to locate seller details'}), 404
+    
+    # Name priority: use 'name' if available, else combine first_name + last_name
+    full_name = getattr(seller_profile, 'name', None)  # Check if name field exists
+    if not full_name and (seller_profile.first_name or seller_profile.last_name):
+        full_name = f"{seller_profile.first_name or ''} {seller_profile.last_name or ''}".strip()
+    
+    return jsonify({
+        'fullName': full_name or '',
+        'company': seller_profile.business_name or '',
+        'designation': seller_profile.designation or '',
+        'contactPhone': seller_profile.mobile or '',
+        'contactEmail': user.email or '',
+        'profileImage': None  # Always None for sellers as requested
+    })
+
+def get_seller_attendee_info(seller_profile_id, attendee_number):
+    """Get access information for a seller attendee"""
+    # Get the seller profile
+    seller_profile = SellerProfile.query.get(seller_profile_id)
+    if not seller_profile:
+        return jsonify({'error': 'Unable to locate seller details'}), 404
+    
+    # Get the specific attendee
+    attendee = SellerAttendee.query.filter_by(
+        seller_profile_id=seller_profile_id,
+        attendee_number=attendee_number
+    ).first()
+    
+    if not attendee:
+        return jsonify({'error': 'Unable to locate attendee details'}), 404
+    
+    return jsonify({
+        'fullName': (attendee.name or '').strip(),
+        'company': (seller_profile.business_name or '').strip(),
+        'designation': (attendee.designation or '').strip(),
+        'contactPhone': (attendee.mobile or '').strip(),
+        'contactEmail': (attendee.email or '').strip(),
+        'profileImage': None
+    })
