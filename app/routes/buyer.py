@@ -1453,6 +1453,24 @@ def get_buyer_public_profile(buyer_slug):
                 'error': 'Buyer profile not found'
             }), 404
         
+        # Get buyer profile image using helper function
+        profile_image_data = None
+        try:
+            if buyer_profile.profile_image:
+                # Extract filename from the stored path
+                filename = buyer_profile.profile_image.split('/')[-1]
+                
+                # Convert image to base64 data URL using helper function
+                image_data = convert_image_to_base64_data_url(buyer_id, filename)
+                profile_image_data = image_data['image_data_url']
+            else:
+                # No profile image path stored
+                profile_image_data = None
+        except Exception as e:
+            # Log error but don't fail the request
+            logging.error(f"Error retrieving buyer profile image for user {buyer_id}: {str(e)}")
+            profile_image_data = None
+
         # Return only public-safe subset of data
         buyer_data = {
             'user_id': buyer_profile.user_id,
@@ -1463,7 +1481,7 @@ def get_buyer_public_profile(buyer_slug):
             'state': buyer_profile.state,
             'country': buyer_profile.country,
             'address': buyer_profile.address,
-            'profile_image': buyer_profile.profile_image+'/download',
+            'profile_image': profile_image_data,
             'status': buyer_profile.status,
             'vip': buyer_profile.vip,
             'category': buyer_profile.category.name if buyer_profile.category else None,
