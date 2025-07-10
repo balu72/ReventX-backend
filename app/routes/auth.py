@@ -406,3 +406,94 @@ def get_seller_attendee_info(seller_profile_id, attendee_number):
         'contactEmail': (attendee.email or '').strip(),
         'profileImage': None
     })
+
+@auth.route('/register-walkin-buyer', methods=['POST'])
+def register_walkin_buyer():
+    """Register a new walk-in buyer"""
+    data = request.get_json()
+    
+    # Validate required fields
+    required_fields = [
+        'salutation', 'firstName', 'lastName', 'organization', 
+        'phone', 'email', 'state', 'city', 'pincode'
+    ]
+    
+    for field in required_fields:
+        if field not in data or not data[field]:
+            return jsonify({'error': f'Missing required field: {field}'}), 400
+    
+    # Validate email format
+    import re
+    email_regex = r'^[^\s@]+@[^\s@]+\.[^\s@]+$'
+    if not re.match(email_regex, data['email']):
+        return jsonify({'error': 'Invalid email format'}), 400
+    
+    # Check if email already exists
+    existing_user = User.query.filter_by(email=data['email']).first()
+    if existing_user:
+        return jsonify({'error': 'Email already exists'}), 409
+    
+    # Generate username from email (use email prefix)
+    username = data['email'].split('@')[0]
+    
+    # Ensure username is unique by appending numbers if needed
+    base_username = username
+    counter = 1
+    while User.query.filter_by(username=username).first():
+        username = f"{base_username}{counter}"
+        counter += 1
+    
+    try:
+        # Create new user with default password "Splash123"
+        user = User(
+            username=username,
+            email=data['email'],
+            password="Splash123",  # This will be hashed automatically in the User.__init__ method
+            role=UserRole.BUYER
+        )
+        
+        db.session.add(user)
+        db.session.flush()  # Get the user ID
+        
+        # Create buyer profile with walk-in category (ID 7)
+        buyer_profile = BuyerProfile(
+            user_id=user.id,
+            salutation=data['salutation'],
+            first_name=data['firstName'],
+            last_name=data['lastName'],
+            name=f"{data['firstName']} {data['lastName']}",  # Full name
+            organization=data['organization'],
+            designation=data.get('designation', ''),
+            mobile=data['phone'],
+            operator_type=data.get('operatorType', 'Domestic'),
+            state=data['state'],
+            city=data['city'],
+            pincode=data['pincode'],
+            gst=data.get('gst', ''),
+            category_id=7,  # Walk-in buyer category
+            status='active'  # Set as active immediately
+        )
+        
+        db.session.add(buyer_profile)
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Walk-in buyer registered successfully',
+            'user': {
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'role': user.role
+            },
+            'buyer_profile': {
+                'id': buyer_profile.id,
+                'name': buyer_profile.name,
+                'organization': buyer_profile.organization,
+                'category_id': buyer_profile.category_id
+            }
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error creating walk-in buyer: {str(e)}")
+        return jsonify({'error': 'Failed to register walk-in buyer. Please try again.'}), 500

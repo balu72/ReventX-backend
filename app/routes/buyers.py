@@ -539,7 +539,6 @@ def get_countries():
     }), 200
 
 @buyers.route('/states', methods=['GET'])
-@jwt_required()
 def get_states():
     """Get all unique states for a specific country"""
     country = request.args.get('country')
