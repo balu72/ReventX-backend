@@ -475,11 +475,12 @@ class Meeting(db.Model):
         # Get seller's stall information
         seller_stall = None
         if self.seller:
-            # Query for the seller's allocated stall
-            from sqlalchemy.orm import sessionmaker
+            # Query for the seller's allocated stall - check for any stall with allocated_stall_number
+            # regardless of is_allocated flag, as stalls may be assigned but not marked as allocated
             seller_stall = db.session.query(Stall).filter_by(
-                seller_id=self.seller.id, 
-                is_allocated=True
+                seller_id=self.seller.id
+            ).filter(
+                Stall.allocated_stall_number.isnot(None)
             ).first()
         
         return {

@@ -378,6 +378,20 @@ def export_meetings_for_pdf():
         'meetings': [m.to_dict() for m in meetings]
     }), 200
 
+@meeting.route('/export/seller', methods=['GET'])
+@jwt_required()
+@seller_required
+def export_meetings_for_pdf_seller():
+    """Get all meetings for the current seller for PDF export"""
+    seller_id = get_jwt_identity()
+    
+    # Get all meetings for this seller (no pagination, no filters)
+    meetings = Meeting.query.filter_by(seller_id=seller_id).all()
+    
+    return jsonify({
+        'meetings': [m.to_dict() for m in meetings]
+    }), 200
+
 @meeting.route('/<int:meeting_id>/<int:buyer_id>/confirm', methods=['POST'])
 @jwt_required()
 @seller_required
