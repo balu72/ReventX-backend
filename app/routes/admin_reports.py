@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from ..utils.auth import admin_required
-from ..models import db, Transportation, TravelPlan, BuyerProfile, User, Accommodation, HostProperty
+from ..models import db, Transportation, TravelPlan, BuyerProfile, User, Accommodation, HostProperty, Meeting, TimeSlot, SellerProfile, Stall, MeetingStatus
 from sqlalchemy import or_, and_, func, desc, asc
 import math
 
@@ -305,4 +305,94 @@ def export_transportation_accommodation_report():
             'error': f'Failed to generate export data: {str(e)}',
             'data': [],
             'total_records': 0
+        }), 500
+
+@admin_reports.route('/reports/buyer-meetings-export', methods=['GET'])
+@admin_required
+def get_buyer_meetings_export():
+    """
+    Get all buyers with their meetings for bulk PDF export (admin only)
+    Returns structured data for frontend PDF generation
+    """
+    try:
+        # Query all buyers with their basic information
+        buyers_query = db.session.query(BuyerProfile, User)\
+            .join(User, BuyerProfile.user_id == User.id)\
+            .filter(User.role == 'buyer')\
+            .order_by(BuyerProfile.name)
+        
+        buyers_data = []
+        total_meetings = 0
+        
+        for buyer_profile, user in buyers_query.all():
+            # Get all accepted meetings for this buyer
+            meetings_query = db.session.query(Meeting, TimeSlot, SellerProfile, Stall)\
+                .outerjoin(TimeSlot, Meeting.time_slot_id == TimeSlot.id)\
+                .outerjoin(SellerProfile, SellerProfile.user_id == Meeting.seller_id)\
+                .outerjoin(Stall, Stall.seller_id == Meeting.seller_id)\
+                .filter(Meeting.buyer_id == user.id)\
+                .filter(Meeting.status == MeetingStatus.ACCEPTED)\
+                .order_by(TimeSlot.start_time.asc().nullslast())
+            
+            meetings = []
+            for meeting, time_slot, seller_profile, stall in meetings_query.all():
+                # Format meeting time
+                meeting_time = "Not scheduled"
+                if time_slot:
+                    start_time = time_slot.start_time.strftime('%I:%M %p') if time_slot.start_time else ""
+                    end_time = time_slot.end_time.strftime('%I:%M %p') if time_slot.end_time else ""
+                    if start_time and end_time:
+                        meeting_time = f"{start_time} - {end_time}"
+                elif hasattr(meeting, 'meeting_date') and meeting.meeting_date and hasattr(meeting, 'meeting_time') and meeting.meeting_time:
+                    # Use meeting date/time if available
+                    meeting_time = f"{meeting.meeting_date.strftime('%d/%m/%Y')} {meeting.meeting_time.strftime('%I:%M %p')}"
+                
+                # Get seller name
+                seller_name = "Unknown Seller"
+                if seller_profile:
+                    if hasattr(seller_profile, 'business_name') and seller_profile.business_name:
+                        seller_name = seller_profile.business_name
+                    elif hasattr(seller_profile, 'company_name') and seller_profile.company_name:
+                        seller_name = seller_profile.company_name
+                
+                # Get stall number
+                stall_number = "Not assigned"
+                if stall:
+                    if hasattr(stall, 'allocated_stall_number') and stall.allocated_stall_number:
+                        stall_number = stall.allocated_stall_number
+                    elif hasattr(stall, 'number') and stall.number:
+                        stall_number = stall.number
+                
+                meetings.append({
+                    'meeting_time': meeting_time,
+                    'stall_number': stall_number,
+                    'seller_name': seller_name,
+                    'notes': meeting.notes or "",
+                    'status': meeting.status.value if meeting.status else "pending"
+                })
+            
+            # Only add buyers who have accepted meetings
+            if meetings:
+                buyers_data.append({
+                    'buyer_id': user.id,
+                    'buyer_name': buyer_profile.name or "Unknown",
+                    'buyer_organization': buyer_profile.organization or "Unknown Organization",
+                    'meetings': meetings
+                })
+                
+                total_meetings += len(meetings)
+        
+        return jsonify({
+            'message': 'Buyer meetings export data generated successfully',
+            'buyers': buyers_data,
+            'total_buyers': len(buyers_data),
+            'total_meetings': total_meetings
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': f'Failed to generate buyer meetings export data: {str(e)}',
+            'buyers': [],
+            'total_buyers': 0,
+            'total_meetings': 0
         }), 500
