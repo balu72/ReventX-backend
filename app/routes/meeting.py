@@ -1,6 +1,7 @@
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from datetime import datetime
+from datetime import datetime, timedelta
+import pytz
 from ..models import db, Meeting, TimeSlot, User, UserRole, MeetingStatus, SystemSetting
 from ..utils.auth import buyer_required, seller_required
 import logging
@@ -421,8 +422,33 @@ def confirm_meeting_with_buyer(meeting_id, buyer_id):
     # 4. Get system settings for date/time validation
     event_start = SystemSetting.query.filter_by(key='event_start_date').first()
     event_end = SystemSetting.query.filter_by(key='event_end_date').first()
-    day_start = SystemSetting.query.filter_by(key='day_start_time').first()
-    day_end = SystemSetting.query.filter_by(key='day_end_time').first()
+    
+    # Get day start/end times and apply IST conversion with time adjustments
+    day_start_setting = SystemSetting.query.filter_by(key='day_start_time').first()
+    day_end_setting = SystemSetting.query.filter_by(key='day_end_time').first()
+    
+    # Convert to IST and apply time adjustments
+    ist_timezone = pytz.timezone('Asia/Kolkata')
+    current_datetime_ist = datetime.now(ist_timezone)
+    
+    # Parse the time settings and apply adjustments
+    try:
+        # Parse day start time and subtract 4 hours
+        day_start_time_base = datetime.strptime(day_start_setting.value, '%I:%M %p').time()
+        day_start_datetime = datetime.combine(current_datetime_ist.date(), day_start_time_base)
+        day_start_datetime_ist = ist_timezone.localize(day_start_datetime) - timedelta(hours=4)
+        
+        # Parse day end time and add 2 hours  
+        day_end_time_base = datetime.strptime(day_end_setting.value, '%I:%M %p').time()
+        day_end_datetime = datetime.combine(current_datetime_ist.date(), day_end_time_base)
+        day_end_datetime_ist = ist_timezone.localize(day_end_datetime) + timedelta(hours=2)
+        
+        # Extract the adjusted times
+        day_start = day_start_datetime_ist.time()
+        day_end = day_end_datetime_ist.time()
+        
+    except (ValueError, AttributeError):
+        return jsonify({'error': 'Invalid day time configuration'}), 500
     
     if not event_start or not event_end or not day_start or not day_end:
         return jsonify({'error': 'System settings not configured properly'}), 500
@@ -439,19 +465,13 @@ def confirm_meeting_with_buyer(meeting_id, buyer_id):
     except (ValueError, AttributeError):
         return jsonify({'error': 'Invalid event date configuration'}), 500
     
-    # Parse day start/end times
-    try:
-        day_start_time = datetime.strptime(day_start.value, '%I:%M %p').time()
-        day_end_time = datetime.strptime(day_end.value, '%I:%M %p').time()
-    except (ValueError, AttributeError):
-        return jsonify({'error': 'Invalid day time configuration'}), 500
-    
     # Check if current date is within event dates
     if not (event_start_date <= current_date <= event_end_date):
         return jsonify({'error': 'You cannot confirm this meeting today'}), 400
     
-    # Check if current time is within day hours
-    if not (day_start_time <= current_time <= day_end_time):
+    # Check if current time is within adjusted day hours (using IST-adjusted times)
+    current_time_ist = current_datetime_ist.time()
+    if not (day_start <= current_time_ist <= day_end):
         return jsonify({'error': 'You cannot confirm this meeting today'}), 400
     
     # 6. Check buyer category
