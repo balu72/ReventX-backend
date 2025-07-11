@@ -363,3 +363,153 @@ def cancel_meeting(meeting_id):
     return jsonify({
         'message': 'Meeting cancelled successfully'
     }), 200
+
+@meeting.route('/export', methods=['GET'])
+@jwt_required()
+@buyer_required
+def export_meetings_for_pdf():
+    """Get all meetings for the current buyer for PDF export"""
+    buyer_id = get_jwt_identity()
+    
+    # Get all meetings for this buyer (no pagination, no filters)
+    meetings = Meeting.query.filter_by(buyer_id=buyer_id).all()
+    
+    return jsonify({
+        'meetings': [m.to_dict() for m in meetings]
+    }), 200
+
+@meeting.route('/<int:meeting_id>/<int:buyer_id>/confirm', methods=['POST'])
+@jwt_required()
+@seller_required
+def confirm_meeting_with_buyer(meeting_id, buyer_id):
+    """Confirm meeting with buyer (seller only)"""
+    
+    # 1. Get seller user ID from JWT
+    seller_id = get_jwt_identity()
+    
+    # 2. Validate seller and buyer exist
+    seller = User.query.get(seller_id)
+    buyer = User.query.get(buyer_id)
+    
+    if not seller or seller.role != UserRole.SELLER.value:
+        return jsonify({'error': 'Invalid seller'}), 400
+        
+    if not buyer or buyer.role != UserRole.BUYER.value:
+        return jsonify({'error': 'Invalid buyer'}), 400
+    
+    # 3. Check seller and buyer profiles exist
+    if not seller.seller_profile:
+        return jsonify({'error': 'Seller profile not found'}), 400
+        
+    if not buyer.buyer_profile:
+        return jsonify({'error': 'Buyer profile not found'}), 400
+    
+    # 4. Get system settings for date/time validation
+    event_start = SystemSetting.query.filter_by(key='event_start_date').first()
+    event_end = SystemSetting.query.filter_by(key='event_end_date').first()
+    day_start = SystemSetting.query.filter_by(key='day_start_time').first()
+    day_end = SystemSetting.query.filter_by(key='day_end_time').first()
+    
+    if not event_start or not event_end or not day_start or not day_end:
+        return jsonify({'error': 'System settings not configured properly'}), 500
+    
+    # 5. Validate current date/time is within allowed range
+    current_datetime = datetime.now()
+    current_date = current_datetime.date()
+    current_time = current_datetime.time()
+    
+    # Parse event dates
+    try:
+        event_start_date = datetime.fromisoformat(event_start.value.replace('Z', '+00:00')).date()
+        event_end_date = datetime.fromisoformat(event_end.value.replace('Z', '+00:00')).date()
+    except (ValueError, AttributeError):
+        return jsonify({'error': 'Invalid event date configuration'}), 500
+    
+    # Parse day start/end times
+    try:
+        day_start_time = datetime.strptime(day_start.value, '%I:%M %p').time()
+        day_end_time = datetime.strptime(day_end.value, '%I:%M %p').time()
+    except (ValueError, AttributeError):
+        return jsonify({'error': 'Invalid day time configuration'}), 500
+    
+    # Check if current date is within event dates
+    if not (event_start_date <= current_date <= event_end_date):
+        return jsonify({'error': 'You cannot confirm this meeting today'}), 400
+    
+    # Check if current time is within day hours
+    if not (day_start_time <= current_time <= day_end_time):
+        return jsonify({'error': 'You cannot confirm this meeting today'}), 400
+    
+    # 6. Check buyer category
+    buyer_category_id = buyer.buyer_profile.category_id
+    
+    if buyer_category_id == 7:  # Walk-in
+        # Check if walk-in meeting already exists and is confirmed
+        existing_walkin = Meeting.query.filter_by(
+            buyer_id=buyer_id, 
+            seller_id=seller_id,
+            status=MeetingStatus.UNSCHEDULED_COMPLETED
+        ).first()
+        
+        if existing_walkin:
+            return jsonify({'message': 'Meeting is already confirmed'}), 200
+        
+        # Create new meeting with UNSCHEDULED_COMPLETED status
+        new_meeting = Meeting(
+            buyer_id=buyer_id,
+            seller_id=seller_id,
+            requestor_id=seller_id,
+            status=MeetingStatus.UNSCHEDULED_COMPLETED,
+            meeting_date=current_date,
+            notes=f"Walk-in meeting confirmed on {current_datetime.strftime('%Y-%m-%d %H:%M')}"
+        )
+        db.session.add(new_meeting)
+        
+    else:  # Scheduled buyer
+        existing_meeting = None
+        
+        # Handle auto-detect meeting (meeting_id < 0)
+        if meeting_id < 0:
+            # Find existing meeting between seller and buyer
+            existing_meeting = Meeting.query.filter_by(
+                buyer_id=buyer_id, 
+                seller_id=seller_id
+            ).filter(
+                Meeting.status.in_([MeetingStatus.ACCEPTED, MeetingStatus.COMPLETED])
+            ).first()
+            
+            if not existing_meeting:
+                return jsonify({'error': 'You have no meeting with this buyer'}), 400
+        else:
+            # Get the specific meeting by ID
+            existing_meeting = Meeting.query.get(meeting_id)
+            
+            if not existing_meeting:
+                return jsonify({'error': 'Meeting not found'}), 404
+            
+            # Verify this meeting belongs to the seller and buyer
+            if existing_meeting.seller_id != seller_id or existing_meeting.buyer_id != buyer_id:
+                return jsonify({'error': 'You have no meeting with this buyer'}), 400
+        
+        # Check if meeting is already confirmed
+        if existing_meeting.status == MeetingStatus.COMPLETED:
+            return jsonify({'message': 'Meeting is already confirmed'}), 200
+        
+        # Check meeting status is accepted
+        if existing_meeting.status != MeetingStatus.ACCEPTED:
+            return jsonify({'error': 'Meeting must be accepted before it can be confirmed'}), 400
+        
+        # Check meeting date is today or in the past
+        if existing_meeting.meeting_date and existing_meeting.meeting_date > current_date:
+            return jsonify({'error': 'Cannot confirm future meetings'}), 400
+        
+        # Update status to COMPLETED
+        existing_meeting.status = MeetingStatus.COMPLETED
+    
+    try:
+        db.session.commit()
+        return jsonify({'message': 'Meeting confirmed successfully'}), 200
+    except Exception as e:
+        db.session.rollback()
+        logging.error(f"Error confirming meeting: {str(e)}")
+        return jsonify({'error': 'Failed to confirm meeting'}), 500

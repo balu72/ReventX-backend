@@ -18,6 +18,7 @@ class MeetingStatus(enum.Enum):
     COMPLETED = "completed"
     CANCELLED = "cancelled"
     EXPIRED = "expired"
+    UNSCHEDULED_COMPLETED = "unscheduled_completed"
 
 class ListingStatus(enum.Enum):
     ACTIVE = "active"
