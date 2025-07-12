@@ -503,13 +503,13 @@ def confirm_meeting_with_buyer(meeting_id, buyer_id):
         existing_meeting = None
         
         # Handle auto-detect meeting (meeting_id < 0)
-        if meeting_id < 0:
+        if meeting_id <= 0:
             # Find existing meeting between seller and buyer
             existing_meeting = Meeting.query.filter_by(
                 buyer_id=buyer_id, 
                 seller_id=seller_id
             ).filter(
-                Meeting.status.in_([MeetingStatus.ACCEPTED, MeetingStatus.COMPLETED])
+                Meeting.status.in_([MeetingStatus.ACCEPTED])
             ).first()
             
             if not existing_meeting:
