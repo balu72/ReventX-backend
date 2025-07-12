@@ -9,7 +9,7 @@ from flask_jwt_extended import (
 from datetime import datetime, timedelta
 import re
 import logging
-from ..models import db, User, UserRole, InvitedBuyer, PendingBuyer, DomainRestriction, BuyerProfile, SellerProfile, SellerAttendee
+from ..models import db, User, UserRole, InvitedBuyer, PendingBuyer, DomainRestriction, BuyerProfile, SellerProfile, SellerAttendee, AccessLog
 from ..utils.email_service import send_registration_confirmation_email
 
 auth = Blueprint('auth', __name__, url_prefix='/api/auth')
@@ -353,6 +353,16 @@ def get_buyer_access_info(user):
         logging.error(f"Error retrieving buyer profile image for user {user.id}: {str(e)}")
         profile_image_data = None
     
+    # Log successful buyer access
+    try:
+        log_access_event(
+            scanned_id=f"B{user.id}",
+            scan_type="BUYER_ACCESS"
+        )
+    except Exception as e:
+        # Log error but don't fail the request
+        logging.error(f"Error logging access event for buyer {user.id}: {str(e)}")
+    
     return jsonify({
         'fullName': full_name or '',
         'company': buyer_profile.organization or '',
@@ -373,6 +383,16 @@ def get_seller_access_info(user):
     if not full_name and (seller_profile.first_name or seller_profile.last_name):
         full_name = f"{seller_profile.first_name or ''} {seller_profile.last_name or ''}".strip()
     
+    # Log successful seller access
+    try:
+        log_access_event(
+            scanned_id=f"S{user.id}",
+            scan_type="SELLER_ACCESS"
+        )
+    except Exception as e:
+        # Log error but don't fail the request
+        logging.error(f"Error logging access event for buyer {user.id}: {str(e)}")
+
     return jsonify({
         'fullName': full_name or '',
         'company': seller_profile.business_name or '',
@@ -397,6 +417,16 @@ def get_seller_attendee_info(seller_profile_id, attendee_number):
     
     if not attendee:
         return jsonify({'error': 'Unable to locate attendee details'}), 404
+    
+    # Log successful seller attendee access
+    try:
+        log_access_event(
+            scanned_id=f"S{seller_profile.user_id}SA{attendee_number}",
+            scan_type="SELLER_ATTENDEE_ACCESS"
+        )
+    except Exception as e:
+            # Log error but don't fail the request
+        logging.error(f"Error logging access event for buyer {user.id}: {str(e)}")
     
     return jsonify({
         'fullName': (attendee.name or '').strip(),
@@ -497,3 +527,70 @@ def register_walkin_buyer():
         db.session.rollback()
         print(f"Error creating walk-in buyer: {str(e)}")
         return jsonify({'error': 'Failed to register walk-in buyer. Please try again.'}), 500
+
+def log_access_event(scanned_id, scan_type=None, scan_date_time=None):
+    """
+    Log an access event to the access_log table
+    
+    Args:
+        scanned_id (str): The ID that was scanned/accessed
+        scan_type (str, optional): Type of scan/access event
+        scan_date_time (datetime, optional): When the event occurred (defaults to now)
+    
+    Returns:
+        dict: {'success': bool, 'message': str, 'log_id': int}
+    """
+    try:
+        # Validate required parameters
+        if not scanned_id:
+            return {
+                'success': False,
+                'message': 'scanned_id is required',
+                'log_id': None
+            }
+        
+        # Convert scanned_id to string and ensure it's not longer than 100 characters
+        scanned_id_str = str(scanned_id)[:100]
+        
+        # Use current time if scan_date_time is not provided
+        if scan_date_time is None:
+            scan_date_time = datetime.utcnow()
+        
+        # Truncate scan_type if it's too long
+        if scan_type and len(scan_type) > 100:
+            scan_type = scan_type[:100]
+        
+        # Create new access log entry
+        access_log = AccessLog(
+            scanned_id=scanned_id_str,
+            scan_date_time=scan_date_time,
+            scan_type=scan_type,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+        
+        # Add to database session
+        db.session.add(access_log)
+        db.session.commit()
+        
+        logging.info(f"Access event logged: ID={scanned_id_str}, Type={scan_type}, Time={scan_date_time}")
+        
+        return {
+            'success': True,
+            'message': 'Access event logged successfully',
+            'log_id': access_log.id
+        }
+        
+    except Exception as e:
+        # Rollback the session in case of error
+        db.session.rollback()
+        
+        # Log the error
+        error_msg = f"Failed to log access event: {str(e)}"
+        logging.error(error_msg)
+        
+        return {
+            'success': False,
+            'message': error_msg,
+            'log_id': None
+        }

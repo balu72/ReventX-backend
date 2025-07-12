@@ -1135,3 +1135,23 @@ class StallDistanceMatrix(db.Model):
                 'is_allocated': self.destination_stall.is_allocated
             } if self.destination_stall else None
         }
+
+class AccessLog(db.Model):
+    __tablename__ = 'access_log'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    scanned_id = db.Column(db.String(100), nullable=False)
+    scan_date_time = db.Column(db.DateTime, nullable=False)
+    scan_type = db.Column(db.String(100), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=True)
+    updated_at = db.Column(db.DateTime, nullable=True)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'scanned_id': self.scanned_id,
+            'scan_date_time': self.scan_date_time.isoformat() if self.scan_date_time else None,
+            'scan_type': self.scan_type,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+        }

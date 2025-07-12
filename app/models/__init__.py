@@ -7,7 +7,7 @@ from .models import (
     BuyerCategory, PropertyType, Interest, StallType, StallInventory, HostProperty, TransportType,
     SellerAttendee, SellerBusinessInfo, SellerFinancialInfo, SellerReferences,
     BuyerBusinessInfo, BuyerFinancialInfo, BuyerReferences,
-    MigrationLog, MigrationMappingBuyers, MigrationMappingSellers
+    MigrationLog, MigrationMappingBuyers, MigrationMappingSellers, AccessLog
 )
 
 __all__ = [
@@ -19,5 +19,5 @@ __all__ = [
     'BuyerCategory', 'PropertyType', 'Interest', 'StallType', 'StallInventory', 'HostProperty', 'TransportType',
     'SellerAttendee', 'SellerBusinessInfo', 'SellerFinancialInfo', 'SellerReferences',
     'BuyerBusinessInfo', 'BuyerFinancialInfo', 'BuyerReferences',
-    'MigrationLog', 'MigrationMappingBuyers', 'MigrationMappingSellers'
+    'MigrationLog', 'MigrationMappingBuyers', 'MigrationMappingSellers', 'AccessLog'
 ]
