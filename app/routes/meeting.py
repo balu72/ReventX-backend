@@ -456,6 +456,7 @@ def confirm_meeting_with_buyer(meeting_id, buyer_id):
     # 5. Validate current date/time is within allowed range
     # Use IST timezone for all datetime operations
     current_date_ist = current_datetime_ist.date()
+    current_time_ist = current_datetime_ist.time()
     
     # Parse event dates and convert to IST timezone for proper comparison
     try:
@@ -477,7 +478,6 @@ def confirm_meeting_with_buyer(meeting_id, buyer_id):
         return jsonify({'error': 'You cannot confirm this meeting today'}), 400
     
     # Check if current time is within adjusted day hours (using IST-adjusted times)
-    current_time_ist = current_datetime_ist.time()
     if not (day_start <= current_time_ist <= day_end):
         return jsonify({'error': 'Meeting confirmation is not allowed at this time'}), 400
     
@@ -542,9 +542,15 @@ def confirm_meeting_with_buyer(meeting_id, buyer_id):
         if existing_meeting.status != MeetingStatus.ACCEPTED:
             return jsonify({'error': 'Meeting must be accepted before it can be confirmed'}), 400
         
-        # Check meeting date is today or in the past (using IST date)
-        if existing_meeting.meeting_date and existing_meeting.meeting_date > current_date_ist:
-            return jsonify({'error': 'Cannot confirm future meetings'}), 400
+        # Check meeting date is today or in the past (convert stored UTC date to IST for comparison)
+        if existing_meeting.meeting_date:
+            # Convert stored UTC date to IST date for proper comparison
+            meeting_date_utc = datetime.combine(existing_meeting.meeting_date, datetime.min.time())
+            meeting_date_utc = meeting_date_utc.replace(tzinfo=pytz.UTC)
+            meeting_date_ist = meeting_date_utc.astimezone(ist_timezone).date()
+            
+            if meeting_date_ist > current_date_ist:
+                return jsonify({'error': 'Cannot confirm future meetings'}), 400
         
         # Update status to COMPLETED
         existing_meeting.status = MeetingStatus.COMPLETED
