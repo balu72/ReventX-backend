@@ -278,8 +278,8 @@ def check_user_access(user_slug):
         # Trim the user_slug first
         user_slug = user_slug.strip()
         
-        # Check for seller-attendee pattern: S{1-3digits}SA{1-2digits}
-        seller_attendee_pattern = r'^S(\d{1,3})SA(\d{1,2})$'
+        # Check for seller-attendee pattern: S{1-3digits}A{1-3digits}
+        seller_attendee_pattern = r'^S(\d{1,3})A(\d{1,3})$'
         match = re.match(seller_attendee_pattern, user_slug)
         
         if match:
@@ -412,7 +412,7 @@ def get_seller_attendee_info(seller_profile_id, attendee_number):
     # Get the specific attendee
     attendee = SellerAttendee.query.filter_by(
         seller_profile_id=seller_profile_id,
-        attendee_number=attendee_number
+        id=attendee_number
     ).first()
     
     if not attendee:
@@ -421,7 +421,7 @@ def get_seller_attendee_info(seller_profile_id, attendee_number):
     # Log successful seller attendee access
     try:
         log_access_event(
-            scanned_id=f"S{seller_profile.user_id}SA{attendee_number}",
+            scanned_id=f"S{seller_profile.user_id}A{attendee_number}",
             scan_type="SELLER_ATTENDEE_ACCESS"
         )
     except Exception as e:

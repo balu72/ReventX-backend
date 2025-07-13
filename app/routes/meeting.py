@@ -454,25 +454,32 @@ def confirm_meeting_with_buyer(meeting_id, buyer_id):
         return jsonify({'error': 'System settings not configured properly'}), 500
     
     # 5. Validate current date/time is within allowed range
-    current_datetime = datetime.now()
-    current_date = current_datetime.date()
-    current_time = current_datetime.time()
+    # Use IST timezone for all datetime operations
+    current_date_ist = current_datetime_ist.date()
     
-    # Parse event dates
+    # Parse event dates and convert to IST timezone for proper comparison
     try:
-        event_start_date = datetime.fromisoformat(event_start.value.replace('Z', '+00:00')).date()
-        event_end_date = datetime.fromisoformat(event_end.value.replace('Z', '+00:00')).date()
+        # Parse as UTC datetime first, then convert to IST
+        event_start_utc = datetime.fromisoformat(event_start.value.replace('Z', '+00:00'))
+        event_end_utc = datetime.fromisoformat(event_end.value.replace('Z', '+00:00'))
+        
+        # Convert to IST timezone and extract dates
+        event_start_ist = event_start_utc.astimezone(ist_timezone)
+        event_end_ist = event_end_utc.astimezone(ist_timezone)
+        
+        event_start_date_ist = event_start_ist.date()
+        event_end_date_ist = event_end_ist.date()
     except (ValueError, AttributeError):
         return jsonify({'error': 'Invalid event date configuration'}), 500
     
-    # Check if current date is within event dates
-    if not (event_start_date <= current_date <= event_end_date):
+    # Check if current IST date is within event IST dates
+    if not (event_start_date_ist <= current_date_ist <= event_end_date_ist):
         return jsonify({'error': 'You cannot confirm this meeting today'}), 400
     
     # Check if current time is within adjusted day hours (using IST-adjusted times)
     current_time_ist = current_datetime_ist.time()
     if not (day_start <= current_time_ist <= day_end):
-        return jsonify({'error': 'You cannot confirm this meeting today'}), 400
+        return jsonify({'error': 'Meeting confirmation is not allowed at this time'}), 400
     
     # 6. Check buyer category
     buyer_category_id = buyer.buyer_profile.category_id
@@ -489,13 +496,15 @@ def confirm_meeting_with_buyer(meeting_id, buyer_id):
             return jsonify({'message': 'Meeting is already confirmed'}), 200
         
         # Create new meeting with UNSCHEDULED_COMPLETED status
+        current_utc = datetime.now()
         new_meeting = Meeting(
             buyer_id=buyer_id,
             seller_id=seller_id,
             requestor_id=seller_id,
             status=MeetingStatus.UNSCHEDULED_COMPLETED,
-            meeting_date=current_date,
-            notes=f"Walk-in meeting confirmed on {current_datetime.strftime('%Y-%m-%d %H:%M')}"
+            meeting_date=current_utc.date(),
+            meeting_time=current_utc.time(),
+            notes=f"Walk-in meeting confirmed on {current_datetime_ist.strftime('%Y-%m-%d %H:%M')} IST"
         )
         db.session.add(new_meeting)
         
@@ -533,8 +542,8 @@ def confirm_meeting_with_buyer(meeting_id, buyer_id):
         if existing_meeting.status != MeetingStatus.ACCEPTED:
             return jsonify({'error': 'Meeting must be accepted before it can be confirmed'}), 400
         
-        # Check meeting date is today or in the past
-        if existing_meeting.meeting_date and existing_meeting.meeting_date > current_date:
+        # Check meeting date is today or in the past (using IST date)
+        if existing_meeting.meeting_date and existing_meeting.meeting_date > current_date_ist:
             return jsonify({'error': 'Cannot confirm future meetings'}), 400
         
         # Update status to COMPLETED
