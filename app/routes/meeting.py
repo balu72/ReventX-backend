@@ -393,6 +393,236 @@ def export_meetings_for_pdf_seller():
         'meetings': [m.to_dict() for m in meetings]
     }), 200
 
+@meeting.route('/bulk-confirm', methods=['POST'])
+@jwt_required()
+@seller_required
+def bulk_confirm_meeting_with_buyer():
+    """Bulk confirm meetings with multiple buyers (seller only)"""
+    
+    data = request.get_json()
+    seller_id = get_jwt_identity()
+    
+    # Validate required fields
+    if 'buyer_ids' not in data:
+        return jsonify({
+            'error': 'Missing required field: buyer_ids'
+        }), 400
+    
+    buyer_ids = data['buyer_ids']
+    if not isinstance(buyer_ids, list) or len(buyer_ids) == 0:
+        return jsonify({
+            'error': 'buyer_ids must be a non-empty list'
+        }), 400
+    
+    # Validate seller exists
+    seller = User.query.get(seller_id)
+    if not seller or seller.role != UserRole.SELLER.value:
+        return jsonify({'error': 'Invalid seller'}), 400
+    
+    if not seller.seller_profile:
+        return jsonify({'error': 'Seller profile not found'}), 400
+    
+    # Get system settings for date/time validation
+    event_start = SystemSetting.query.filter_by(key='event_start_date').first()
+    event_end = SystemSetting.query.filter_by(key='event_end_date').first()
+    day_start_setting = SystemSetting.query.filter_by(key='day_start_time').first()
+    day_end_setting = SystemSetting.query.filter_by(key='day_end_time').first()
+    
+    # Convert to IST and apply time adjustments
+    ist_timezone = pytz.timezone('Asia/Kolkata')
+    current_datetime_ist = datetime.now(ist_timezone)
+    
+    # Parse the time settings and apply adjustments
+    try:
+        day_start_time_base = datetime.strptime(day_start_setting.value, '%I:%M %p').time()
+        day_start_datetime = datetime.combine(current_datetime_ist.date(), day_start_time_base)
+        day_start_datetime_ist = ist_timezone.localize(day_start_datetime) - timedelta(hours=4)
+        
+        day_end_time_base = datetime.strptime(day_end_setting.value, '%I:%M %p').time()
+        day_end_datetime = datetime.combine(current_datetime_ist.date(), day_end_time_base)
+        day_end_datetime_ist = ist_timezone.localize(day_end_datetime) + timedelta(hours=2)
+        
+        day_start = day_start_datetime_ist.time()
+        day_end = day_end_datetime_ist.time()
+        
+    except (ValueError, AttributeError):
+        return jsonify({'error': 'Invalid day time configuration'}), 500
+    
+    if not event_start or not event_end or not day_start or not day_end:
+        return jsonify({'error': 'System settings not configured properly'}), 500
+    
+    current_date_ist = current_datetime_ist.date()
+    current_time_ist = current_datetime_ist.time()
+    
+    # Parse event dates and convert to IST timezone for proper comparison
+    try:
+        event_start_utc = datetime.fromisoformat(event_start.value.replace('Z', '+00:00'))
+        event_end_utc = datetime.fromisoformat(event_end.value.replace('Z', '+00:00'))
+        
+        event_start_ist = event_start_utc.astimezone(ist_timezone)
+        event_end_ist = event_end_utc.astimezone(ist_timezone)
+        
+        event_start_date_ist = event_start_ist.date()
+        event_end_date_ist = event_end_ist.date()
+    except (ValueError, AttributeError):
+        return jsonify({'error': 'Invalid event date configuration'}), 500
+    
+    results = []
+    successful_count = 0
+    failed_count = 0
+    
+    # Process each buyer_id
+    for buyer_id in buyer_ids:
+        try:
+            # Validate buyer exists
+            buyer = User.query.get(buyer_id)
+            if not buyer or buyer.role != UserRole.BUYER.value:
+                results.append({
+                    'buyer_id': buyer_id,
+                    'status': 'error',
+                    'message': 'Invalid buyer'
+                })
+                failed_count += 1
+                continue
+            
+            if not buyer.buyer_profile:
+                results.append({
+                    'buyer_id': buyer_id,
+                    'status': 'error',
+                    'message': 'Buyer profile not found'
+                })
+                failed_count += 1
+                continue
+            
+            # Check buyer category
+            buyer_category_id = buyer.buyer_profile.category_id
+            
+            if buyer_category_id == 7:  # Walk-in
+                # Check if walk-in meeting already exists and is confirmed
+                existing_walkin = Meeting.query.filter_by(
+                    buyer_id=buyer_id, 
+                    seller_id=seller_id,
+                    status=MeetingStatus.UNSCHEDULED_COMPLETED
+                ).first()
+                
+                if existing_walkin:
+                    results.append({
+                        'buyer_id': buyer_id,
+                        'status': 'success',
+                        'message': 'Meeting is already confirmed'
+                    })
+                    successful_count += 1
+                    continue
+                
+                # Create new meeting with UNSCHEDULED_COMPLETED status
+                current_utc = datetime.now()
+                new_meeting = Meeting(
+                    buyer_id=buyer_id,
+                    seller_id=seller_id,
+                    requestor_id=seller_id,
+                    status=MeetingStatus.UNSCHEDULED_COMPLETED,
+                    meeting_date=current_utc.date(),
+                    meeting_time=current_utc.time(),
+                    notes=f"Walk-in meeting confirmed on {current_datetime_ist.strftime('%Y-%m-%d %H:%M')} IST"
+                )
+                db.session.add(new_meeting)
+                
+                results.append({
+                    'buyer_id': buyer_id,
+                    'status': 'success',
+                    'message': 'Walk-in meeting confirmed successfully'
+                })
+                successful_count += 1
+                
+            else:  # Scheduled buyer
+                # Find existing meeting between seller and buyer
+                existing_meeting = Meeting.query.filter_by(
+                    buyer_id=buyer_id, 
+                    seller_id=seller_id
+                ).filter(
+                    Meeting.status.in_([MeetingStatus.ACCEPTED])
+                ).first()
+                
+                if not existing_meeting:
+                    results.append({
+                        'buyer_id': buyer_id,
+                        'status': 'error',
+                        'message': 'No accepted meeting found with this buyer'
+                    })
+                    failed_count += 1
+                    continue
+                
+                # Check if meeting is already confirmed
+                if existing_meeting.status == MeetingStatus.COMPLETED:
+                    results.append({
+                        'buyer_id': buyer_id,
+                        'status': 'success',
+                        'message': 'Meeting is already confirmed'
+                    })
+                    successful_count += 1
+                    continue
+                
+                # Check meeting status is accepted
+                if existing_meeting.status != MeetingStatus.ACCEPTED:
+                    results.append({
+                        'buyer_id': buyer_id,
+                        'status': 'error',
+                        'message': 'Meeting must be accepted before it can be confirmed'
+                    })
+                    failed_count += 1
+                    continue
+                
+                # Check meeting date is today or in the past
+                if existing_meeting.meeting_date:
+                    meeting_date_utc = datetime.combine(existing_meeting.meeting_date, datetime.min.time())
+                    meeting_date_utc = meeting_date_utc.replace(tzinfo=pytz.UTC)
+                    meeting_date_ist = meeting_date_utc.astimezone(ist_timezone).date()
+                    
+                    if meeting_date_ist > current_date_ist:
+                        results.append({
+                            'buyer_id': buyer_id,
+                            'status': 'error',
+                            'message': 'Cannot confirm future meetings'
+                        })
+                        failed_count += 1
+                        continue
+                
+                # Update status to COMPLETED
+                existing_meeting.status = MeetingStatus.COMPLETED
+                
+                results.append({
+                    'buyer_id': buyer_id,
+                    'status': 'success',
+                    'message': 'Meeting confirmed successfully'
+                })
+                successful_count += 1
+                
+        except Exception as e:
+            logging.error(f"Error confirming meeting for buyer {buyer_id}: {str(e)}")
+            results.append({
+                'buyer_id': buyer_id,
+                'status': 'error',
+                'message': f'Failed to confirm meeting: {str(e)}'
+            })
+            failed_count += 1
+    
+    # Commit all changes
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logging.error(f"Error committing bulk confirmation: {str(e)}")
+        return jsonify({'error': 'Failed to commit bulk confirmation'}), 500
+    
+    return jsonify({
+        'results': results,
+        'summary': {
+            'total': len(buyer_ids),
+            'successful': successful_count,
+            'failed': failed_count
+        }
+    }), 200
+
 @meeting.route('/<int:meeting_id>/<int:buyer_id>/confirm', methods=['POST'])
 @jwt_required()
 @seller_required
@@ -474,12 +704,12 @@ def confirm_meeting_with_buyer(meeting_id, buyer_id):
         return jsonify({'error': 'Invalid event date configuration'}), 500
     
     # Check if current IST date is within event IST dates
-    if not (event_start_date_ist <= current_date_ist <= event_end_date_ist):
-        return jsonify({'error': 'You cannot confirm this meeting today'}), 400
+    #if not (event_start_date_ist <= current_date_ist <= event_end_date_ist):
+    #    return jsonify({'error': 'You cannot confirm this meeting today'}), 400
     
     # Check if current time is within adjusted day hours (using IST-adjusted times)
-    if not (day_start <= current_time_ist <= day_end):
-        return jsonify({'error': 'Meeting confirmation is not allowed at this time'}), 400
+    #if not (day_start <= current_time_ist <= day_end):
+    #    return jsonify({'error': 'Meeting confirmation is not allowed at this time'}), 400
     
     # 6. Check buyer category
     buyer_category_id = buyer.buyer_profile.category_id

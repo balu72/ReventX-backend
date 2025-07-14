@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request
-from flask_jwt_extended import jwt_required
+from flask_jwt_extended import jwt_required, get_jwt_identity
 from ..utils.auth import seller_required, admin_required
 from ..models import db, User, UserRole, BuyerProfile, Interest, PropertyType
 from ..utils.meeting_utils import calculate_buyer_meeting_quota, batch_calculate_buyer_meeting_quota
@@ -987,4 +987,62 @@ def get_all_buyer_user_ids():
     except Exception as e:
         return jsonify({
             'error': f'Internal server error: {str(e)}'
+        }), 500
+
+@buyers.route('/export-data', methods=['GET'])
+@seller_required
+def get_buyers_export_data():
+    """Get minimal buyer data optimized for PDF export - SELLERS ONLY"""
+    try:
+        # Validate that the current user is actually a seller
+        user_id = get_jwt_identity()
+        if isinstance(user_id, str):
+            try:
+                user_id = int(user_id)
+            except ValueError:
+                return jsonify({'error': 'Invalid user ID'}), 400
+        
+        # Double-check user role (seller_required should handle this, but extra safety)
+        current_user = User.query.get(user_id)
+        if not current_user or current_user.role != UserRole.SELLER.value:
+            return jsonify({'error': 'Access denied. Sellers only.'}), 403
+        
+        # Single optimized query to get all buyers with only required fields
+        buyers_data = db.session.query(
+            BuyerProfile.organization,
+            BuyerProfile.name,
+            BuyerProfile.designation,
+            BuyerProfile.mobile,
+            BuyerProfile.website,
+            BuyerProfile.address,
+            BuyerProfile.interests,
+            BuyerProfile.properties_of_interest,
+            User.email
+        ).join(User).filter(
+            User.role == UserRole.BUYER.value
+        ).order_by(BuyerProfile.organization.asc()).all()
+        
+        # Convert to simple dict format with proper null handling and text formatting
+        export_data = []
+        for buyer in buyers_data:
+            export_data.append({
+                'organization': buyer.organization.title() if buyer.organization else '',
+                'name': buyer.name.title() if buyer.name else '',
+                'designation': buyer.designation or '',
+                'mobile': buyer.mobile or '',
+                'email': buyer.email.lower() if buyer.email else '',
+                'website': buyer.website or '',
+                'address': buyer.address or '',
+                'interests': ', '.join(buyer.interests) if buyer.interests else '',
+                'properties_of_interest': ', '.join(buyer.properties_of_interest) if buyer.properties_of_interest else ''
+            })
+        
+        return jsonify({
+            'buyers': export_data,
+            'total_count': len(export_data)
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': f'Failed to fetch export data: {str(e)}'
         }), 500
