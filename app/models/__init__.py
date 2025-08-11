@@ -6,8 +6,9 @@ from .models import (
     SellerProfile, BuyerProfile, SystemSetting, TimeSlot, Stall,
     BuyerCategory, PropertyType, Interest, StallType, StallInventory, HostProperty, TransportType,
     SellerAttendee, SellerBusinessInfo, SellerFinancialInfo, SellerReferences,
-    BuyerBusinessInfo, BuyerFinancialInfo, BuyerReferences,
-    MigrationLog, MigrationMappingBuyers, MigrationMappingSellers, AccessLog
+    BuyerBusinessInfo, BuyerFinancialInfo, BuyerReferences, BuyerBankDetails,
+    MigrationLog, MigrationMappingBuyers, MigrationMappingSellers, AccessLog,
+    seller_target_markets
 )
 
 __all__ = [
@@ -18,6 +19,7 @@ __all__ = [
     'SellerProfile', 'BuyerProfile', 'SystemSetting', 'TimeSlot', 'Stall',
     'BuyerCategory', 'PropertyType', 'Interest', 'StallType', 'StallInventory', 'HostProperty', 'TransportType',
     'SellerAttendee', 'SellerBusinessInfo', 'SellerFinancialInfo', 'SellerReferences',
-    'BuyerBusinessInfo', 'BuyerFinancialInfo', 'BuyerReferences',
-    'MigrationLog', 'MigrationMappingBuyers', 'MigrationMappingSellers', 'AccessLog'
+    'BuyerBusinessInfo', 'BuyerFinancialInfo', 'BuyerReferences', 'BuyerBankDetails',
+    'MigrationLog', 'MigrationMappingBuyers', 'MigrationMappingSellers', 'AccessLog',
+    'seller_target_markets'
 ]

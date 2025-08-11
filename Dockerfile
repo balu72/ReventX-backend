@@ -1,10 +1,10 @@
-# Multi-stage build for Flask backend
-FROM python:3.11-alpine as builder
+FROM python:3.11-alpine
 
-# Set working directory
-WORKDIR /app
+# Create non-root user
+RUN addgroup -g 1001 -S appgroup && \
+    adduser -S appuser -u 1001 -G appgroup
 
-# Install system dependencies
+# Install system and Python build dependencies
 RUN apk add --no-cache \
     g++ \
     libstdc++ \
@@ -13,57 +13,39 @@ RUN apk add --no-cache \
     musl-dev \
     postgresql-dev \
     python3-dev \
-    libffi-dev
-
-# Copy requirements first for better caching
-COPY requirements.txt .
-
-# Install Python dependencies
-RUN pip install --no-cache-dir --user -r requirements.txt
-
-# Production stage
-FROM python:3.11-alpine
-
-# Create non-root user
-RUN addgroup -g 1001 -S appgroup && \
-    adduser -S appuser -u 1001 -G appgroup
-
-# Install runtime dependencies
-RUN apk add --no-cache \
+    libffi-dev \
     postgresql-client \
     curl
 
 # Set working directory
 WORKDIR /app
 
-# Copy Python packages from builder stage
-COPY --from=builder /root/.local /home/appuser/.local
+# Copy requirements first
+COPY requirements.txt .
 
-# Copy application code
+# Install Python dependencies directly in final image
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy app code
 COPY . .
 
-# Copy entrypoint script
+# Entrypoint setup
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Change ownership to non-root user
+# Change ownership
 RUN chown -R appuser:appgroup /app
 
-# Switch to non-root user
+# Switch to appuser
 USER appuser
 
-# Make sure scripts in .local are usable
+# Set PATH just in case any scripts end up under .local/bin
 ENV PATH=/home/appuser/.local/bin:$PATH
 
-# Expose port
+# Expose and health check
 EXPOSE 5000
-
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:5000/api/health || exit 1
 
-# Set entrypoint
 ENTRYPOINT ["docker-entrypoint.sh"]
-
-# Default command
 CMD ["python", "run.py"]

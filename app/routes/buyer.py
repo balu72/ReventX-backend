@@ -12,7 +12,7 @@ from werkzeug.utils import secure_filename
 import os
 import logging
 from ..utils.auth import buyer_required
-from ..models import db, User, TravelPlan, Transportation, Accommodation, GroundTransportation, Meeting, MeetingStatus, UserRole, TimeSlot, SystemSetting, BuyerProfile, BuyerCategory, PropertyType, Interest, StallType, Stall
+from ..models import db, User, TravelPlan, Transportation, Accommodation, GroundTransportation, Meeting, MeetingStatus, UserRole, TimeSlot, SystemSetting, BuyerProfile, BuyerCategory, PropertyType, Interest, StallType, Stall, BuyerBankDetails
 # Import helper functions from buyer_utils
 from ..utils.buyer_utils import (
     get_outbound_departure_datetime,
@@ -33,6 +33,7 @@ from ..utils.buyer_utils import (
     create_buyer_image_response,
     log_buyer_image_response
 )
+from ..utils.payment_utils import get_bank_details_from_ifsc, validate_ifsc_format
 
 buyer = Blueprint('buyer', __name__, url_prefix='/api/buyer')
 
@@ -1495,4 +1496,246 @@ def get_buyer_public_profile(buyer_slug):
     except Exception as e:
         return jsonify({
             'error': f'Failed to fetch buyer profile: {str(e)}'
+        }), 500
+
+@buyer.route('/bank_details', methods=['POST'])
+@buyer_required
+def create_bank_details():
+    """
+    Endpoint to create buyer bank details
+    """
+    user_id = get_jwt_identity()
+    
+    # Step 1: Validate user_id and convert to int
+    if isinstance(user_id, str):
+        try:
+            user_id = int(user_id)
+        except ValueError:
+            return jsonify({'error': 'Invalid user ID'}), 400
+    
+    # Step 2: Check that buyer is valid user (exists in users.id)
+    user = User.query.get(user_id)
+    if not user or user.role != UserRole.BUYER.value:
+        return jsonify({'error': 'Invalid buyer user'}), 400
+    
+    # Step 3: Check that buyer has a profile (buyer_id = buyer_profile.user_id)
+    buyer_profile = BuyerProfile.query.filter_by(user_id=user_id).first()
+    if not buyer_profile:
+        return jsonify({'error': 'Buyer profile not found. Please create profile first.'}), 400
+    
+    # Step 4: Check no existing record for this buyer_id in buyer_bank_details
+    existing_bank_details = BuyerBankDetails.query.filter_by(buyer_id=user_id).first()
+    if existing_bank_details:
+        return jsonify({'error': 'Bank details already exist for this buyer'}), 400
+    
+    # Step 5: Get and validate input data
+    data = request.get_json()
+    
+    # Step 6: Validate all required (non-null) fields are present
+    required_fields = [
+        'ifsc_code', 'bank_name', 'bank_branch', 'bank_city',
+        'account_holder_name', 'account_number', 'account_type'
+    ]
+    
+    for field in required_fields:
+        if field not in data or not data[field]:
+            return jsonify({'error': f'Missing required field: {field}'}), 400
+    
+    # Step 7: Create new BuyerBankDetails record
+    try:
+        bank_details = BuyerBankDetails(
+            buyer_id=user_id,
+            # Required fields
+            ifsc_code=data['ifsc_code'],
+            bank_name=data['bank_name'],
+            bank_branch=data['bank_branch'],
+            bank_city=data['bank_city'],
+            account_holder_name=data['account_holder_name'],
+            account_number=data['account_number'],
+            account_type=data['account_type'],
+            # Optional fields (will be None if not provided)
+            bank_centre=data.get('bank_centre'),
+            bank_district=data.get('bank_district'),
+            bank_state=data.get('bank_state'),
+            bank_address=data.get('bank_address'),
+            bank_phone=data.get('bank_phone'),
+            bank_micr=data.get('bank_micr'),
+            # Payment capabilities - default to True if not provided
+            imps_enabled=data.get('imps_enabled', True),
+            neft_enabled=data.get('neft_enabled', True),
+            rtgs_enabled=data.get('rtgs_enabled', True),
+            upi_enabled=data.get('upi_enabled', True),
+            # Timestamps
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+        
+        db.session.add(bank_details)
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Bank details created successfully',
+            'bank_details': bank_details.to_dict()
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'error': f'Failed to create bank details: {str(e)}'
+        }), 500
+
+@buyer.route('/bank_details', methods=['PUT'])
+@buyer_required
+def update_bank_details():
+    """
+    Endpoint to update buyer bank details
+    """
+    user_id = get_jwt_identity()
+    
+    # Step 1: Validate user_id and convert to int
+    if isinstance(user_id, str):
+        try:
+            user_id = int(user_id)
+        except ValueError:
+            return jsonify({'error': 'Invalid user ID'}), 400
+    
+    # Step 2: Check that buyer is valid user (exists in users.id)
+    user = User.query.get(user_id)
+    if not user or user.role != UserRole.BUYER.value:
+        return jsonify({'error': 'Invalid buyer user'}), 400
+    
+    # Step 3: Check that buyer has a profile (buyer_id = buyer_profile.user_id)
+    buyer_profile = BuyerProfile.query.filter_by(user_id=user_id).first()
+    if not buyer_profile:
+        return jsonify({'error': 'Buyer profile not found. Please create profile first.'}), 400
+    
+    # Step 4: Check that existing record EXISTS for this buyer_id in buyer_bank_details
+    existing_bank_details = BuyerBankDetails.query.filter_by(buyer_id=user_id).first()
+    if not existing_bank_details:
+        return jsonify({'error': 'Bank details not found. Please create bank details first.'}), 404
+    
+    # Step 5: Get and validate input data
+    data = request.get_json()
+    
+    # Step 6: Validate all required (non-null) fields are present
+    required_fields = [
+        'ifsc_code', 'bank_name', 'bank_branch', 'bank_city',
+        'account_holder_name', 'account_number', 'account_type'
+    ]
+    
+    for field in required_fields:
+        if field not in data or not data[field]:
+            return jsonify({'error': f'Missing required field: {field}'}), 400
+    
+    # Step 7: Update existing BuyerBankDetails record
+    try:
+        # Update required fields
+        existing_bank_details.ifsc_code = data['ifsc_code']
+        existing_bank_details.bank_name = data['bank_name']
+        existing_bank_details.bank_branch = data['bank_branch']
+        existing_bank_details.bank_city = data['bank_city']
+        existing_bank_details.account_holder_name = data['account_holder_name']
+        existing_bank_details.account_number = data['account_number']
+        existing_bank_details.account_type = data['account_type']
+        
+        # Update optional fields
+        existing_bank_details.bank_centre = data.get('bank_centre')
+        existing_bank_details.bank_district = data.get('bank_district')
+        existing_bank_details.bank_state = data.get('bank_state')
+        existing_bank_details.bank_address = data.get('bank_address')
+        existing_bank_details.bank_phone = data.get('bank_phone')
+        existing_bank_details.bank_micr = data.get('bank_micr')
+        
+        # Update payment capabilities - default to True if not provided
+        existing_bank_details.imps_enabled = data.get('imps_enabled', True)
+        existing_bank_details.neft_enabled = data.get('neft_enabled', True)
+        existing_bank_details.rtgs_enabled = data.get('rtgs_enabled', True)
+        existing_bank_details.upi_enabled = data.get('upi_enabled', True)
+        
+        # Update only the updated_at timestamp (preserve created_at)
+        existing_bank_details.updated_at = datetime.utcnow()
+        
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Bank details updated successfully',
+            'bank_details': existing_bank_details.to_dict()
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'error': f'Failed to update bank details: {str(e)}'
+        }), 500
+
+@buyer.route('/bank_details', methods=['GET'])
+@buyer_required
+def get_bank_details():
+    """
+    Endpoint to get buyer's existing bank details
+    """
+    user_id = get_jwt_identity()
+    
+    # Convert to int if it's a string
+    if isinstance(user_id, str):
+        try:
+            user_id = int(user_id)
+        except ValueError:
+            return jsonify({'error': 'Invalid user ID'}), 400
+    
+    # Get existing bank details for this buyer
+    bank_details = BuyerBankDetails.query.filter_by(buyer_id=user_id).first()
+    
+    if not bank_details:
+        return jsonify({
+            'error': 'No bank details found for this buyer'
+        }), 404
+    
+    return jsonify({
+        'bank_details': bank_details.to_dict()
+    }), 200
+
+@buyer.route('/bank_details_ifsc/<ifsc>', methods=['GET'])
+@buyer_required
+def get_ifsc_bank_details(ifsc):
+    """
+    Endpoint to get bank details from IFSC code using Razorpay API
+    """
+    try:
+        # Validate IFSC format first
+        if not validate_ifsc_format(ifsc):
+            return jsonify({
+                'error': 'Invalid IFSC code format'
+            }), 400
+        
+        # Get bank details from IFSC
+        bank_details = get_bank_details_from_ifsc(ifsc)
+        
+        if bank_details:
+            # Transform uppercase field names to lowercase for better JSON practices
+            transformed_details = {
+                'ifsc': bank_details.get('IFSC', ''),
+                'bank_name': bank_details.get('BANK', ''),
+                'branch': bank_details.get('BRANCH', ''),
+                'centre': bank_details.get('CENTRE', ''),
+                'city': bank_details.get('CITY', ''),
+                'district': bank_details.get('DISTRICT', ''),
+                'state': bank_details.get('STATE', ''),
+                'address': bank_details.get('ADDRESS', ''),
+                'contact': bank_details.get('CONTACT', ''),
+                'micr': bank_details.get('MICR', ''),
+                'imps': bank_details.get('IMPS', True),
+                'neft': bank_details.get('NEFT', True),
+                'rtgs': bank_details.get('RTGS', True),
+                'upi': bank_details.get('UPI', True)
+            }
+            return jsonify(transformed_details), 200
+        else:
+            return jsonify({
+                'error': 'IFSC code not found or invalid'
+            }), 404
+            
+    except Exception as e:
+        return jsonify({
+            'error': f'Failed to fetch bank details: {str(e)}'
         }), 500

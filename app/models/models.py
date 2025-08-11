@@ -945,6 +945,67 @@ class BuyerReferences(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
+class BuyerBankDetails(db.Model):
+    __tablename__ = 'buyer_bank_details'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    buyer_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, unique=True)
+    
+    # Bank Information
+    ifsc_code = db.Column(db.String(11), nullable=False)
+    bank_name = db.Column(db.String(200), nullable=False)
+    bank_branch = db.Column(db.String(100), nullable=False)
+    bank_centre = db.Column(db.String(100), nullable=True)
+    bank_city = db.Column(db.String(100), nullable=False)
+    bank_district = db.Column(db.String(100), nullable=True)
+    bank_state = db.Column(db.String(100), nullable=True)
+    bank_address = db.Column(db.String(300), nullable=True)
+    bank_phone = db.Column(db.String(20), nullable=True)
+    bank_micr = db.Column(db.String(20), nullable=True)
+    
+    # Payment Method Capabilities
+    imps_enabled = db.Column(db.Boolean, nullable=True)
+    neft_enabled = db.Column(db.Boolean, nullable=True)
+    rtgs_enabled = db.Column(db.Boolean, nullable=True)
+    upi_enabled = db.Column(db.Boolean, nullable=True)
+    
+    # Account Information
+    account_holder_name = db.Column(db.String(200), nullable=False)
+    account_number = db.Column(db.String(50), nullable=False)
+    account_type = db.Column(db.String(50), nullable=False)
+    
+    # Timestamps
+    created_at = db.Column(db.DateTime, nullable=True)
+    updated_at = db.Column(db.DateTime, nullable=True)
+    
+    # Relationships
+    buyer = db.relationship('User', backref=db.backref('bank_details', uselist=False))
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'buyer_id': self.buyer_id,
+            'ifsc_code': self.ifsc_code,
+            'bank_name': self.bank_name,
+            'bank_branch': self.bank_branch,
+            'bank_centre': self.bank_centre,
+            'bank_city': self.bank_city,
+            'bank_district': self.bank_district,
+            'bank_state': self.bank_state,
+            'bank_address': self.bank_address,
+            'bank_phone': self.bank_phone,
+            'bank_micr': self.bank_micr,
+            'imps_enabled': self.imps_enabled,
+            'neft_enabled': self.neft_enabled,
+            'rtgs_enabled': self.rtgs_enabled,
+            'upi_enabled': self.upi_enabled,
+            'account_holder_name': self.account_holder_name,
+            'account_number': self.account_number,
+            'account_type': self.account_type,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+        }
+
 class SellerBusinessInfo(db.Model):
     __tablename__ = 'seller_business_info'
     

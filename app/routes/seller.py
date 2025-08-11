@@ -813,9 +813,8 @@ def delete_attendee(attendee_id):
         }), 500
 
 @seller.route('/property-types', methods=['GET'])
-@jwt_required()
 def get_property_types():
-    """Get all property types"""
+    """Get all property types (public endpoint for registration)"""
     try:
         property_types = PropertyType.query.all()
         return jsonify({
@@ -827,9 +826,8 @@ def get_property_types():
         }), 500
 
 @seller.route('/interests', methods=['GET'])
-@jwt_required()
 def get_interests():
-    """Get all interests"""
+    """Get all interests (public endpoint for registration)"""
     try:
         interests = Interest.query.all()
         return jsonify({

@@ -9,7 +9,7 @@ from flask_jwt_extended import (
 from datetime import datetime, timedelta
 import re
 import logging
-from ..models import db, User, UserRole, InvitedBuyer, PendingBuyer, DomainRestriction, BuyerProfile, SellerProfile, SellerAttendee, AccessLog
+from ..models import db, User, UserRole, InvitedBuyer, PendingBuyer, DomainRestriction, BuyerProfile, SellerProfile, SellerAttendee, AccessLog, PropertyType, Interest
 from ..utils.email_service import send_registration_confirmation_email
 
 auth = Blueprint('auth', __name__, url_prefix='/api/auth')
@@ -527,6 +527,140 @@ def register_walkin_buyer():
         db.session.rollback()
         print(f"Error creating walk-in buyer: {str(e)}")
         return jsonify({'error': 'Failed to register walk-in buyer. Please try again.'}), 500
+
+@auth.route('/register-new-seller', methods=['POST'])
+def register_new_seller():
+    """Register a new seller"""
+    data = request.get_json()
+    
+    # Validate required fields
+    required_fields = [
+        'salutation', 'firstName', 'lastName', 'organization', 'designation',
+        'phone', 'email', 'address', 'state', 'city', 'pincode', 'gst', 
+        'website', 'property_type_id', 'start_year', 'target_market'
+    ]
+    
+    for field in required_fields:
+        if field not in data or not data[field]:
+            return jsonify({'error': f'Missing required field: {field}'}), 400
+    
+    # Validate email format
+    import re
+    email_regex = r'^[^\s@]+@[^\s@]+\.[^\s@]+$'
+    if not re.match(email_regex, data['email']):
+        return jsonify({'error': 'Invalid email format'}), 400
+    
+    # Check if email already exists
+    existing_user = User.query.filter_by(email=data['email']).first()
+    if existing_user:
+        return jsonify({'error': 'Email already exists'}), 409
+    
+    # Validate property type exists
+    property_type = PropertyType.query.get(data['property_type_id'])
+    if not property_type:
+        return jsonify({'error': 'Invalid property type'}), 400
+    
+    # Validate target markets (convert from CSV string or array)
+    target_markets = []
+    if isinstance(data['target_market'], str):
+        # If it's a CSV string, split it
+        target_market_names = [name.strip() for name in data['target_market'].split(',') if name.strip()]
+    elif isinstance(data['target_market'], list):
+        # If it's already an array
+        target_market_names = data['target_market']
+    else:
+        return jsonify({'error': 'Invalid target_market format'}), 400
+    
+    # Validate each target market exists in interests table
+    for market_name in target_market_names:
+        interest = Interest.query.filter_by(name=market_name).first()
+        if not interest:
+            return jsonify({'error': f'Invalid target market: {market_name}'}), 400
+        target_markets.append(interest)
+    
+    if not target_markets:
+        return jsonify({'error': 'At least one target market is required'}), 400
+    
+    # Generate username from email (use email prefix)
+    username = data['email'].split('@')[0]
+    
+    # Ensure username is unique by appending numbers if needed
+    base_username = username
+    counter = 1
+    while User.query.filter_by(username=username).first():
+        username = f"{base_username}{counter}"
+        counter += 1
+    
+    try:
+        # Create new user with default password "Splash123"
+        user = User(
+            username=username,
+            email=data['email'],
+            password="Splash123",  # This will be hashed automatically in the User.__init__ method
+            role=UserRole.SELLER
+        )
+        
+        db.session.add(user)
+        db.session.flush()  # Get the user ID
+        
+        # Create comma-separated string from target market names
+        target_market_string = ', '.join([interest.name for interest in target_markets])
+        
+        # Create seller profile
+        seller_profile = SellerProfile(
+            user_id=user.id,
+            # Personal Information
+            salutation=data['salutation'],
+            first_name=data['firstName'],
+            last_name=data['lastName'],
+            designation=data['designation'],
+            mobile=data['phone'],
+            # Business Information
+            business_name=data['organization'],
+            start_year=data['start_year'],
+            gst=data['gst'],
+            website=data['website'],
+            instagram=data.get('instagram', ''),
+            assn_member=data.get('association_member', False),
+            property_type_id=data['property_type_id'],
+            target_market=target_market_string,  # Store as comma-separated string
+            # Address Information
+            address=data['address'],
+            city=data['city'],
+            state=data['state'],
+            pincode=data['pincode'],
+            country=data.get('country', 'India'),
+            # Contact Information (duplicate email and phone for seller profile)
+            contact_email=data['email'],
+            contact_phone=data['phone'],
+            # Status
+            status='active'  # Set as active immediately
+        )
+        
+        db.session.add(seller_profile)
+        
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'New seller registered successfully',
+            'user': {
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'role': user.role
+            },
+            'seller_profile': {
+                'id': seller_profile.id,
+                'business_name': seller_profile.business_name,
+                'property_type': property_type.to_dict(),
+                'target_market': target_market_string
+            }
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error creating new seller: {str(e)}")
+        return jsonify({'error': 'Failed to register new seller. Please try again.'}), 500
 
 def log_access_event(scanned_id, scan_type=None, scan_date_time=None):
     """
