@@ -1,7 +1,8 @@
 """
-Main chatbot service - orchestrates rules, LLM, and context
+Main chatbot service with intelligent tool-based context loading
 """
 import logging
+import re
 from typing import Dict, List, Optional
 from datetime import datetime
 from ..models import db, ChatConversation, ChatMessage, User
@@ -12,21 +13,17 @@ from .chatbot_tools import ChatbotTools
 logger = logging.getLogger(__name__)
 
 class ChatbotService:
-    """Main chatbot service"""
+    """Chatbot service with dynamic tool selection"""
     
     def __init__(self):
         self.llm = LLMService()
         self.context_manager = ChatbotContext()
         self.tools = ChatbotTools()
     
-
     def _extract_company_names(self, message: str) -> List[str]:
-        """Extract potential company names from message"""
-        import re
-        # Look for capitalized multi-word phrases (likely company names)
-        pattern = r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+(?:\s+(?:Private|Pvt\.?|Limited|Ltd\.?|Inc\.?|Corporation|Corp\.?))?)'
-        matches = re.findall(pattern, message)
-        return matches if matches else []
+        """Extract company names from message (capitalized multi-word phrases)"""
+        pattern = r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+(?:\s+(?:Private|Pvt\.?|Limited|Ltd\.?|Inc\.?|Corporation|Corp\.?))?)'
+        return re.findall(pattern, message)
 
     def process_message(
         self,
