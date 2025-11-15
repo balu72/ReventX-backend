@@ -77,6 +77,7 @@ def create_app():
     from .routes.admin_reports import admin_reports
     from .routes.floorplan import floorplan
     from .routes.pincode import pincode
+    from .routes.chatbot import chatbot_bp
     
     app.register_blueprint(main)
     app.register_blueprint(auth)
@@ -93,6 +94,7 @@ def create_app():
     app.register_blueprint(floorplan)
     app.register_blueprint(pincode)  # Public pincode endpoints
     app.register_blueprint(health_bp, url_prefix='/api')
+    app.register_blueprint(chatbot_bp)  # Chatbot routes
     
     # Create database tables (only if database is available)
     with app.app_context():

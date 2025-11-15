@@ -8,6 +8,7 @@ from .models import (
     SellerAttendee, SellerBusinessInfo, SellerFinancialInfo, SellerReferences,
     BuyerBusinessInfo, BuyerFinancialInfo, BuyerReferences, BuyerBankDetails,
     MigrationLog, MigrationMappingBuyers, MigrationMappingSellers, AccessLog,
+    ChatConversation, ChatMessage, ChatFeedback,
     seller_target_markets
 )
 
@@ -21,5 +22,6 @@ __all__ = [
     'SellerAttendee', 'SellerBusinessInfo', 'SellerFinancialInfo', 'SellerReferences',
     'BuyerBusinessInfo', 'BuyerFinancialInfo', 'BuyerReferences', 'BuyerBankDetails',
     'MigrationLog', 'MigrationMappingBuyers', 'MigrationMappingSellers', 'AccessLog',
+    'ChatConversation', 'ChatMessage', 'ChatFeedback',
     'seller_target_markets'
 ]

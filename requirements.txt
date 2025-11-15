@@ -12,3 +12,4 @@ requests==2.31.0
 nc-py-api==0.20.2
 pillow==11.2.1
 pypinindia>=0.1.8
+openai>=1.0.0

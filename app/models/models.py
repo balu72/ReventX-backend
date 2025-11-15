@@ -1216,3 +1216,80 @@ class AccessLog(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
+
+class ChatConversation(db.Model):
+    __tablename__ = 'chat_conversations'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    title = db.Column(db.String(200), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    is_active = db.Column(db.Boolean, default=True)
+    
+    # Relationships
+    user = db.relationship('User', backref=db.backref('chat_conversations', lazy=True))
+    messages = db.relationship('ChatMessage', backref='conversation', lazy=True, cascade='all, delete-orphan', order_by='ChatMessage.created_at')
+    
+    def to_dict(self, include_messages=False):
+        result = {
+            'id': self.id,
+            'user_id': self.user_id,
+            'title': self.title,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'is_active': self.is_active,
+            'message_count': len(self.messages) if self.messages else 0
+        }
+        
+        if include_messages:
+            result['messages'] = [msg.to_dict() for msg in self.messages]
+        
+        return result
+
+class ChatMessage(db.Model):
+    __tablename__ = 'chat_messages'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    conversation_id = db.Column(db.Integer, db.ForeignKey('chat_conversations.id'), nullable=False)
+    role = db.Column(db.String(20), nullable=False)  # 'user', 'assistant', 'system'
+    content = db.Column(db.Text, nullable=False)
+    message_metadata = db.Column('metadata', db.JSON, nullable=True)  # Renamed to avoid SQLAlchemy conflict
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    feedback = db.relationship('ChatFeedback', backref='message', lazy=True, cascade='all, delete-orphan')
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'conversation_id': self.conversation_id,
+            'role': self.role,
+            'content': self.content,
+            'metadata': self.message_metadata,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'has_feedback': len(self.feedback) > 0 if self.feedback else False
+        }
+
+class ChatFeedback(db.Model):
+    __tablename__ = 'chat_feedback'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    message_id = db.Column(db.Integer, db.ForeignKey('chat_messages.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    feedback_type = db.Column(db.String(20), nullable=False)  # 'helpful', 'not_helpful', 'inappropriate'
+    comment = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    user = db.relationship('User', backref=db.backref('chat_feedback', lazy=True))
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'message_id': self.message_id,
+            'user_id': self.user_id,
+            'feedback_type': self.feedback_type,
+            'comment': self.comment,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
